@@ -1,0 +1,13 @@
+services:
+  mysql:
+    image: mysql:8
+    command: --mysql-native-password=ON --authentication-policy=mysql_native_password
+    env_file:
+      - ./.env.local
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-u", "root", "-ppassword"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

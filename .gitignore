@@ -1,0 +1,50 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of go coverage
+*.out
+coverage.html
+
+# Dependency directories
+vendor/
+
+# Go workspace
+go.work
+go.work.sum
+
+# Environment
+.env
+.env.local
+.env.docker
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# api
+sample-api
+
+# Screenshots (generated during development)
+*.png
+*.jpg
+*.jpeg
+
+# agents/tasks ディレクトリ配下のファイルを無視
+.agents/tasks/*
+
+# 個人環境依存の Claude Code 設定
+.claude/*.local.md
