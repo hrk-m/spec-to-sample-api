@@ -68,6 +68,24 @@ func (r *UserRepository) CountByIDs(ctx context.Context, ids []uint64) (int, err
 	return count, nil
 }
 
+// GetByID returns a single active user by ID.
+func (r *UserRepository) GetByID(ctx context.Context, id uint64) (*domain.User, error) {
+	query := "SELECT id, uuid, first_name, last_name FROM users WHERE id = ? AND deleted_at IS NULL"
+
+	var u domain.User
+
+	err := r.db.QueryRowContext(ctx, query, id).Scan(&u.ID, &u.UUID, &u.FirstName, &u.LastName)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+
+		return nil, domain.ErrInternalServerError
+	}
+
+	return &u, nil
+}
+
 // GetByUUID returns a single active user by UUID.
 func (r *UserRepository) GetByUUID(ctx context.Context, uuid string) (domain.User, error) {
 	query := "SELECT id, uuid, first_name, last_name FROM users WHERE uuid = ? AND deleted_at IS NULL"

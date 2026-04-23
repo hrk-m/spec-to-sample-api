@@ -88,6 +88,7 @@ type GroupService interface {
 // UserService: internal/rest/user.go で宣言
 type UserService interface {
     ListUsers(ctx context.Context, q string, limit, offset int) ([]domain.User, int, error)
+    GetUser(ctx context.Context, id uint64) (*domain.User, error)
 }
 
 // AuthService: internal/rest/auth.go で宣言
@@ -129,9 +130,10 @@ type UserRepository interface {
     CountByIDs(ctx context.Context, ids []uint64) (int, error)
 }
 
-// user.UserRepository はユーザー一覧取得のインターフェース（user/service.go で宣言）
+// user.UserRepository はユーザー一覧取得・単件取得のインターフェース（user/service.go で宣言）
 type UserRepository interface {
     ListUsers(ctx context.Context, q string, limit, offset int) ([]domain.User, int, error)
+    GetByID(ctx context.Context, id uint64) (*domain.User, error)
 }
 
 // auth.UserRepository は認証サービスが使うユーザーデータアクセスのインターフェース（auth/service.go で宣言）
@@ -152,4 +154,4 @@ type UserRepository interface {
 
 `RemoveGroupMembers` は service 層でグループ存在確認を行い（`GetByID` 経由）、repository 層でトランザクション内に `DELETE FROM group_members WHERE group_id = ? AND user_id IN (?)` を実行する。`RowsAffected()` が `len(userIDs)` と一致しない場合（非メンバーが含まれる）は `ErrNotFound` を返してロールバックする。handler 層で `user_ids` の空チェック（`len == 0` → 400）を行う。成功時は `204 No Content` を返す。
 
-> **補足**: `mysql.UserRepository` は `group.UserRepository`（`CountByIDs`）、`user.UserRepository`（`ListUsers`）、`auth.UserRepository`（`GetByUUID`）の 3 つのインターフェースを実装する単一の struct。加えて `GetByID` と `GetByUUID` も実装しており、`GetByID` は統合テスト向けに公開されている。`app/main.go` で `mysqlRepo.NewUserRepository(db)` で 1 インスタンスを生成し、`group.NewService`・`user.NewService`・`auth.NewService` の 3 つに渡す。
+> **補足**: `mysql.UserRepository` は `group.UserRepository`（`CountByIDs`）、`user.UserRepository`（`ListUsers`・`GetByID`）、`auth.UserRepository`（`GetByUUID`）の 3 つのインターフェースを実装する単一の struct。`GetByID` は `user.UserRepository` インターフェースの一部として `GET /api/v1/users/:id` のユーザー単件取得に使用される。`app/main.go` で `mysqlRepo.NewUserRepository(db)` で 1 インスタンスを生成し、`group.NewService`・`user.NewService`・`auth.NewService` の 3 つに渡す。

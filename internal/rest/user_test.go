@@ -224,3 +224,103 @@ func TestUserHandler_ListUsers_InternalError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	svc.AssertExpectations(t)
 }
+
+func TestUserHandler_GetUser_OK(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/1", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/users/:id")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+
+	svc := new(mocks.MockUserService)
+	user := &domain.User{ID: 1, UUID: "550e8400-e29b-41d4-a716-446655440001", FirstName: "Taro", LastName: "Yamada"}
+	svc.On("GetUser", mock.Anything, uint64(1)).Return(user, nil)
+
+	h := &rest.UserHandler{Service: svc}
+	err := h.GetUser(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var result domain.User
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, uint64(1), result.ID)
+	assert.Equal(t, "550e8400-e29b-41d4-a716-446655440001", result.UUID)
+	assert.Equal(t, "Taro", result.FirstName)
+	assert.Equal(t, "Yamada", result.LastName)
+	svc.AssertExpectations(t)
+}
+
+func TestUserHandler_GetUser_InvalidIDString(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/abc", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/users/:id")
+	c.SetParamNames("id")
+	c.SetParamValues("abc")
+
+	h := &rest.UserHandler{Service: new(mocks.MockUserService)}
+	err := h.GetUser(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestUserHandler_GetUser_IDZero(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/0", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/users/:id")
+	c.SetParamNames("id")
+	c.SetParamValues("0")
+
+	h := &rest.UserHandler{Service: new(mocks.MockUserService)}
+	err := h.GetUser(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestUserHandler_GetUser_NotFound(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/9999", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/users/:id")
+	c.SetParamNames("id")
+	c.SetParamValues("9999")
+
+	svc := new(mocks.MockUserService)
+	svc.On("GetUser", mock.Anything, uint64(9999)).Return((*domain.User)(nil), domain.ErrNotFound)
+
+	h := &rest.UserHandler{Service: svc}
+	err := h.GetUser(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	svc.AssertExpectations(t)
+}
+
+func TestUserHandler_GetUser_InternalError(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/1", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/users/:id")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+
+	svc := new(mocks.MockUserService)
+	svc.On("GetUser", mock.Anything, uint64(1)).Return((*domain.User)(nil), domain.ErrInternalServerError)
+
+	h := &rest.UserHandler{Service: svc}
+	err := h.GetUser(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	svc.AssertExpectations(t)
+}
