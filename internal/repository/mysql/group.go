@@ -236,7 +236,7 @@ func (r *GroupRepository) ListGroupMembers(ctx context.Context, id uint64, limit
 	args := []interface{}{id}
 
 	if q != "" {
-		query += " AND u.search_key LIKE ?"
+		query += " AND u.search_key LIKE ?" //nolint:goconst
 		args = append(args, "%"+q+"%")
 	}
 
@@ -280,7 +280,7 @@ func (r *GroupRepository) ListNonGroupMembers(ctx context.Context, groupID uint6
 	countArgs := []interface{}{groupID}
 
 	if q != "" {
-		countQuery += " AND search_key LIKE ?"
+		countQuery += " AND search_key LIKE ?" //nolint:goconst
 		countArgs = append(countArgs, "%"+q+"%")
 	}
 
@@ -301,11 +301,11 @@ func (r *GroupRepository) ListNonGroupMembers(ctx context.Context, groupID uint6
 	args := []interface{}{groupID}
 
 	if q != "" {
-		query += " AND search_key LIKE ?"
+		query += " AND search_key LIKE ?" //nolint:goconst
 		args = append(args, "%"+q+"%")
 	}
 
-	query += " ORDER BY id ASC LIMIT ? OFFSET ?"
+	query += " ORDER BY id ASC LIMIT ? OFFSET ?" //nolint:goconst
 	args = append(args, limit, offset)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)

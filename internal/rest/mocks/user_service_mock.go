@@ -19,3 +19,9 @@ func (m *MockUserService) ListUsers(ctx context.Context, q string, limit, offset
 	args := m.Called(ctx, q, limit, offset)
 	return args.Get(0).([]domain.User), args.Int(1), args.Error(2)
 }
+
+// GetUser returns a single user by ID.
+func (m *MockUserService) GetUser(ctx context.Context, id uint64) (*domain.User, error) {
+	args := m.Called(ctx, id)
+	return args.Get(0).(*domain.User), args.Error(1)
+}

@@ -13,6 +13,7 @@ import (
 // UserService defines the interface for the user use case.
 type UserService interface {
 	ListUsers(ctx context.Context, q string, limit, offset int) ([]domain.User, int, error)
+	GetUser(ctx context.Context, id uint64) (*domain.User, error)
 }
 
 // UserHandler handles HTTP requests for the user endpoints.
@@ -24,11 +25,29 @@ type UserHandler struct {
 func NewUserHandler(g *echo.Group, svc UserService) {
 	h := &UserHandler{Service: svc}
 	g.GET("/users", h.ListUsers)
+	g.GET("/users/:id", h.GetUser)
 }
 
 type userListResponse struct {
 	Users []domain.User `json:"users"`
 	Total int           `json:"total"`
+}
+
+// GetUser handles GET /api/v1/users/:id.
+func (h *UserHandler) GetUser(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	id, err := parsePathID(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+	}
+
+	u, err := h.Service.GetUser(ctx, id)
+	if err != nil {
+		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, u)
 }
 
 // ListUsers handles GET /api/v1/users.

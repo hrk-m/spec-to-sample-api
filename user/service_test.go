@@ -88,3 +88,41 @@ func TestService_ListUsers_EmptyResult(t *testing.T) {
 	assert.Equal(t, 0, total)
 	repo.AssertExpectations(t)
 }
+
+func TestService_GetUser_OK(t *testing.T) {
+	repo := new(mocks.MockUserRepository)
+	svc := user.NewService(repo)
+
+	expected := &domain.User{ID: 1, UUID: "550e8400-e29b-41d4-a716-446655440001", FirstName: "Taro", LastName: "Yamada"}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(expected, nil)
+
+	result, err := svc.GetUser(context.Background(), uint64(1))
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, result)
+	repo.AssertExpectations(t)
+}
+
+func TestService_GetUser_NotFound(t *testing.T) {
+	repo := new(mocks.MockUserRepository)
+	svc := user.NewService(repo)
+
+	repo.On("GetByID", mock.Anything, uint64(9999)).Return((*domain.User)(nil), domain.ErrNotFound)
+
+	_, err := svc.GetUser(context.Background(), uint64(9999))
+
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+	repo.AssertExpectations(t)
+}
+
+func TestService_GetUser_RepositoryError(t *testing.T) {
+	repo := new(mocks.MockUserRepository)
+	svc := user.NewService(repo)
+
+	repo.On("GetByID", mock.Anything, uint64(1)).Return((*domain.User)(nil), domain.ErrInternalServerError)
+
+	_, err := svc.GetUser(context.Background(), uint64(1))
+
+	assert.ErrorIs(t, err, domain.ErrInternalServerError)
+	repo.AssertExpectations(t)
+}

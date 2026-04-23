@@ -17,6 +17,7 @@ const (
 // UserRepository defines the interface for user data access.
 type UserRepository interface {
 	ListUsers(ctx context.Context, q string, limit, offset int) ([]domain.User, int, error)
+	GetByID(ctx context.Context, id uint64) (*domain.User, error)
 }
 
 // Service handles user business logic.
@@ -27,6 +28,16 @@ type Service struct {
 // NewService returns a new Service instance.
 func NewService(repo UserRepository) *Service {
 	return &Service{repo: repo}
+}
+
+// GetUser returns a single user by ID.
+func (s *Service) GetUser(ctx context.Context, id uint64) (*domain.User, error) {
+	u, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	return u, nil
 }
 
 // ListUsers returns a paginated list of active users.
