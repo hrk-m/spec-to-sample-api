@@ -1,0 +1,24 @@
+name: Notify updates to spec-to-dev-workflow
+on:
+  push:
+    branches:
+      - main
+jobs:
+  spec-to-dev-workflow:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Generate token
+        id: generate_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          owner: hrk-m  # Allow all repositories in hrk-m
+      - run: |-
+          curl -X POST https://api.github.com/repos/hrk-m/spec-to-dev-workflow/dispatches \
+            -H "Accept: application/vnd.github.everest-preview+json" \
+            -H "Authorization: token ${{ steps.generate_token.outputs.token }}" \
+            --data '{"event_type": "update-apis"}'
