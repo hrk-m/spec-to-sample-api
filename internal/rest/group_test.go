@@ -164,7 +164,7 @@ func TestGroupHandler_ListGroupMembers_OK(t *testing.T) {
 
 	svc := new(mocks.MockGroupService)
 	members := []domain.User{
-		{ID: 1, FirstName: "Taro", LastName: "Yamada"},
+		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada"},
 	}
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
 		Return(members, 1, nil)
@@ -181,6 +181,7 @@ func TestGroupHandler_ListGroupMembers_OK(t *testing.T) {
 	}
 	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
 	assert.Len(t, result.Members, 1)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Members[0].UUID)
 	assert.Equal(t, 1, result.Total)
 	svc.AssertExpectations(t)
 }
@@ -217,7 +218,7 @@ func TestGroupHandler_ListGroupMembers_WithSearch(t *testing.T) {
 
 	svc := new(mocks.MockGroupService)
 	members := []domain.User{
-		{ID: 1, FirstName: "Taro", LastName: "Yamada"},
+		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada"},
 	}
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "Yamada").
 		Return(members, 2, nil)
@@ -1089,7 +1090,7 @@ func TestGroupHandler_ListNonGroupMembers_OK(t *testing.T) {
 
 	svc := new(mocks.MockGroupService)
 	users := []domain.User{
-		{ID: 2, FirstName: "Hanako", LastName: "Suzuki"},
+		{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Suzuki"},
 	}
 	svc.On("ListNonGroupMembers", mock.Anything, uint64(1), 500, 0, "").Return(users, 1, nil)
 
@@ -1105,6 +1106,7 @@ func TestGroupHandler_ListNonGroupMembers_OK(t *testing.T) {
 	}
 	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
 	assert.Len(t, result.Users, 1)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000002", result.Users[0].UUID)
 	assert.Equal(t, 1, result.Total)
 	svc.AssertExpectations(t)
 }
@@ -1120,7 +1122,7 @@ func TestGroupHandler_ListNonGroupMembers_WithQuery(t *testing.T) {
 
 	svc := new(mocks.MockGroupService)
 	users := []domain.User{
-		{ID: 2, FirstName: "Hanako", LastName: "Suzuki"},
+		{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Suzuki"},
 	}
 	svc.On("ListNonGroupMembers", mock.Anything, uint64(1), 500, 0, "Suzuki").Return(users, 5, nil)
 
@@ -1303,8 +1305,8 @@ func TestGroupHandler_AddGroupMembers_OK(t *testing.T) {
 
 	svc := new(mocks.MockGroupService)
 	added := []domain.User{
-		{ID: 2, FirstName: "Hanako", LastName: "Suzuki"},
-		{ID: 3, FirstName: "Jiro", LastName: "Tanaka"},
+		{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Suzuki"},
+		{ID: 3, UUID: "00000000-0000-0000-0000-000000000003", FirstName: "Jiro", LastName: "Tanaka"},
 	}
 	svc.On("AddGroupMembers", mock.Anything, uint64(1), []uint64{2, 3}).Return(added, nil)
 
@@ -1319,6 +1321,8 @@ func TestGroupHandler_AddGroupMembers_OK(t *testing.T) {
 	}
 	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
 	assert.Len(t, result.Members, 2)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000002", result.Members[0].UUID)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000003", result.Members[1].UUID)
 	svc.AssertExpectations(t)
 }
 

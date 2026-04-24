@@ -230,7 +230,7 @@ func (r *GroupRepository) ListGroupMembers(ctx context.Context, id uint64, limit
 	}
 
 	// Fetch paginated members with optional q filter.
-	query := "SELECT u.id, u.first_name, u.last_name" +
+	query := "SELECT u.id, u.uuid, u.first_name, u.last_name" +
 		" FROM group_members gm JOIN users u ON gm.user_id = u.id" +
 		" WHERE gm.group_id = ?"
 	args := []interface{}{id}
@@ -253,7 +253,7 @@ func (r *GroupRepository) ListGroupMembers(ctx context.Context, id uint64, limit
 
 	for rows.Next() {
 		var m domain.User
-		if scanErr := rows.Scan(&m.ID, &m.FirstName, &m.LastName); scanErr != nil {
+		if scanErr := rows.Scan(&m.ID, &m.UUID, &m.FirstName, &m.LastName); scanErr != nil {
 			return nil, 0, domain.ErrInternalServerError
 		}
 
@@ -295,7 +295,7 @@ func (r *GroupRepository) ListNonGroupMembers(ctx context.Context, groupID uint6
 	}
 
 	// Fetch paginated non-members with optional q filter.
-	query := "SELECT id, first_name, last_name FROM users" +
+	query := "SELECT id, uuid, first_name, last_name FROM users" +
 		" WHERE id NOT IN (SELECT user_id FROM group_members WHERE group_id = ?)" +
 		" AND deleted_at IS NULL"
 	args := []interface{}{groupID}
@@ -318,7 +318,7 @@ func (r *GroupRepository) ListNonGroupMembers(ctx context.Context, groupID uint6
 
 	for rows.Next() {
 		var u domain.User
-		if scanErr := rows.Scan(&u.ID, &u.FirstName, &u.LastName); scanErr != nil {
+		if scanErr := rows.Scan(&u.ID, &u.UUID, &u.FirstName, &u.LastName); scanErr != nil {
 			return nil, 0, domain.ErrInternalServerError
 		}
 
@@ -393,7 +393,7 @@ func (r *GroupRepository) AddGroupMembers(ctx context.Context, groupID uint64, u
 		selectArgs[i] = id
 	}
 
-	selectQuery := fmt.Sprintf("SELECT id, first_name, last_name FROM users WHERE id IN (%s) ORDER BY id ASC", //nolint:gosec
+	selectQuery := fmt.Sprintf("SELECT id, uuid, first_name, last_name FROM users WHERE id IN (%s) ORDER BY id ASC", //nolint:gosec
 		strings.Join(placeholders, ","))
 
 	rows, err := r.db.QueryContext(ctx, selectQuery, selectArgs...)
@@ -406,7 +406,7 @@ func (r *GroupRepository) AddGroupMembers(ctx context.Context, groupID uint64, u
 
 	for rows.Next() {
 		var u domain.User
-		if scanErr := rows.Scan(&u.ID, &u.FirstName, &u.LastName); scanErr != nil {
+		if scanErr := rows.Scan(&u.ID, &u.UUID, &u.FirstName, &u.LastName); scanErr != nil {
 			return nil, domain.ErrInternalServerError
 		}
 
