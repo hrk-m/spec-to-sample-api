@@ -6,8 +6,14 @@ services:
       - ./.env.local
     ports:
       - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - "./sample-api/db/database/database-create.sql:/docker-entrypoint-initdb.d/1_init.sql"
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-u", "root", "-ppassword"]
       interval: 5s
       timeout: 3s
       retries: 10
+volumes:
+  mysql-data:
+    driver: local
