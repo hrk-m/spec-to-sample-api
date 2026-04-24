@@ -32,6 +32,8 @@ sample-api/
 │       ├── {feature}.go       # ハンドラ + インターフェース定義 + ルート登録
 │       ├── {feature}_test.go  # モックを使ったハンドラテスト
 │       ├── errors.go          # エラー → HTTP ステータスコードのマッピング
+│       ├── params.go          # クエリ・パスパラメータの共通パース（parseLimit / parseOffset / parsePathID）
+│       ├── health.go          # DBPinger インターフェース定義 + /health ハンドラ登録
 │       ├── auth.go              # AuthHandler + AuthMiddleware + AuthService インターフェース
 │       ├── auth_test.go         # AuthMiddleware・AuthHandler のテスト
 │       └── mocks/             # テスト用 mock（手動保守）

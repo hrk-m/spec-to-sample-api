@@ -75,8 +75,8 @@ func TestService_ListGroupMembers_OK(t *testing.T) {
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	members := []domain.User{
-		{ID: 1, FirstName: "Taro", LastName: "Yamada"},
-		{ID: 2, FirstName: "Hanako", LastName: "Suzuki"},
+		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada"},
+		{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Suzuki"},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
 		Return(members, 2, nil)
@@ -98,7 +98,7 @@ func TestService_ListGroupMembers_WithSearch(t *testing.T) {
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	members := []domain.User{
-		{ID: 1, FirstName: "Taro", LastName: "Yamada"},
+		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada"},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "Yamada").
 		Return(members, 2, nil)
@@ -564,8 +564,8 @@ func TestService_ListNonGroupMembers_OK(t *testing.T) {
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	users := []domain.User{
-		{ID: 2, FirstName: "Hanako", LastName: "Suzuki"},
-		{ID: 3, FirstName: "Jiro", LastName: "Tanaka"},
+		{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Suzuki"},
+		{ID: 3, UUID: "00000000-0000-0000-0000-000000000003", FirstName: "Jiro", LastName: "Tanaka"},
 	}
 	repo.On("ListNonGroupMembers", mock.Anything, uint64(1), 500, 0, "").
 		Return(users, 2, nil)
@@ -587,7 +587,7 @@ func TestService_ListNonGroupMembers_WithSearch(t *testing.T) {
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	users := []domain.User{
-		{ID: 3, FirstName: "Jiro", LastName: "Tanaka"},
+		{ID: 3, UUID: "00000000-0000-0000-0000-000000000003", FirstName: "Jiro", LastName: "Tanaka"},
 	}
 	repo.On("ListNonGroupMembers", mock.Anything, uint64(1), 500, 0, "Tanaka").
 		Return(users, 5, nil)
@@ -695,8 +695,8 @@ func TestService_AddGroupMembers_OK(t *testing.T) {
 
 	userRepo.On("CountByIDs", mock.Anything, []uint64{2, 3}).Return(2, nil)
 
-	user2 := domain.User{ID: 2, FirstName: "Hanako", LastName: "Suzuki"}
-	user3 := domain.User{ID: 3, FirstName: "Jiro", LastName: "Tanaka"}
+	user2 := domain.User{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Suzuki"}
+	user3 := domain.User{ID: 3, UUID: "00000000-0000-0000-0000-000000000003", FirstName: "Jiro", LastName: "Tanaka"}
 	added := []domain.User{user2, user3}
 	repo.On("AddGroupMembers", mock.Anything, uint64(1), []uint64{2, 3}).Return(added, nil)
 

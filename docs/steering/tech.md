@@ -26,6 +26,7 @@ db/seed/                    →  Seed data (DML only)
 ```
 
 - `domain/`: フレームワーク依存ゼロ。純粋な struct とセンチネルエラーのみ
+- `internal/rest/health.go`: `DBPinger` インターフェースを消費側（`internal/rest/`）で定義し、`*sql.DB` が実装する。健全性チェックは `RegisterHealthHandler(e, db)` で `GET /health` に登録する
 - `group/`、`user/`、`auth/` など機能別パッケージ: ビジネスロジックを実装し、repository interface を宣言する
 - `internal/repository/mysql/`: MySQL ベースの repository adapter を実装する
 - `internal/rest/`: Echo ハンドラ。上位層のインターフェースを定義し、DI で受け取る
@@ -148,9 +149,9 @@ type UserRepository interface {
 
 `group.UserRepository.CountByIDs` は `mysql.UserRepository` が実装する。`CountByIDs` は `SELECT COUNT(DISTINCT id) FROM users WHERE id IN (?) AND deleted_at IS NULL` で存在するユーザー数を 1 クエリで返す。
 
-`AddGroupMembers` はトランザクション内で `group_members` へ一括 INSERT する。INSERT 前に重複チェックを行い、既存メンバーが含まれる場合は `ErrConflict` を返す。成功後は追加したユーザーを `users` テーブルから SELECT して返す（`id, first_name, last_name` のみ; `uuid` は含まない）。
+`AddGroupMembers` はトランザクション内で `group_members` へ一括 INSERT する。INSERT 前に重複チェックを行い、既存メンバーが含まれる場合は `ErrConflict` を返す。成功後は追加したユーザーを `users` テーブルから SELECT して返す（`id, uuid, first_name, last_name` の全フィールドを SELECT する）。
 
-`ListGroupMembers` の `users` SELECT は `id, first_name, last_name` のみ（`uuid` は含まない）。`ListNonGroupMembers` も同様に `id, first_name, last_name` のみ。`ListUsers` は `id, uuid, first_name, last_name` をすべて SELECT する。同一の `domain.User` 型を使い回すため、`uuid` を SELECT しないエンドポイントでは `uuid` フィールドが空文字になる。
+`ListGroupMembers`・`ListNonGroupMembers`・`AddGroupMembers` はいずれも `id, uuid, first_name, last_name` の全フィールドを SELECT する。`ListUsers` も同様に全フィールドを SELECT する。
 
 `RemoveGroupMembers` は service 層でグループ存在確認を行い（`GetByID` 経由）、repository 層でトランザクション内に `DELETE FROM group_members WHERE group_id = ? AND user_id IN (?)` を実行する。`RowsAffected()` が `len(userIDs)` と一致しない場合（非メンバーが含まれる）は `ErrNotFound` を返してロールバックする。handler 層で `user_ids` の空チェック（`len == 0` → 400）を行う。成功時は `204 No Content` を返す。
 
