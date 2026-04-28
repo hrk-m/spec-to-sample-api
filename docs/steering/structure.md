@@ -10,7 +10,7 @@ sample-api/
 │   ├── migrate/             # DB schema migration (golang-migrate, .up.sql のみ)
 │   └── seed/                # 初期データ・開発用データ (DML のみ)
 ├── domain/                  # コアドメイン層（フレームワーク依存ゼロ）
-│   ├── *.go                 # ドメインモデル（struct + json タグ）
+│   ├── *.go                 # ドメインモデル（struct + json タグ）。group.go, group_relation.go, user.go
 │   └── errors.go            # センチネルエラーの一元管理
 ├── auth/                    # 認証ユースケース層
 │   ├── service.go           # auth.Service（GetByUUID）+ UserRepository インターフェース
@@ -22,11 +22,12 @@ sample-api/
 │   ├── service_test.go      # 外部テストパッケージ (package {feature}_test)
 │   └── mocks/               # テスト用 mock（手動保守）
 │       ├── {feature}_repository_mock.go
+│       ├── group_relation_repository_mock.go  # group.GroupRelationRepository の mock（group/mocks/ 配下に配置）
 │       └── user_repository_mock.go  # group.UserRepository（CountByIDs）の mock（group/mocks/ 配下に配置）
 ├── internal/
 │   ├── repository/
 │   │   └── mysql/           # Repository adapter（MySQL 実装）
-│   │       ├── {feature}.go
+│   │       ├── {feature}.go          # group.go, group_relation.go, user.go
 │   │       └── {feature}_test.go
 │   └── rest/                # Delivery 層（Echo ハンドラ）
 │       ├── {feature}.go       # ハンドラ + インターフェース定義 + ルート登録
@@ -73,10 +74,11 @@ e := echo.New()
 e.Use(middleware.CORS())           // ミドルウェア登録
 
 // group: repository → service → handler の標準パターン
-// GroupService は GroupRepository と UserRepository の両方を受け取る
+// GroupService は GroupRepository / UserRepository / GroupRelationRepository の 3 つを受け取る
 groupRepo := mysql.NewGroupRepository(db)
 userRepo := mysql.NewUserRepository(db)
-gSvc := group.NewService(groupRepo, userRepo)
+groupRelationRepo := mysql.NewGroupRelationRepository(db)
+gSvc := group.NewServiceWithRelation(groupRepo, userRepo, groupRelationRepo)
 
 // user: user 一覧の標準パターン
 uSvc := user.NewService(userRepo)
@@ -91,7 +93,7 @@ rest.NewGroupHandler(apiGroup, gSvc)
 rest.NewUserHandler(apiGroup, uSvc)
 ```
 
-新しいドメインを追加する場合は group パターン（Repository → Service → Handler）を踏襲する。
+新しいドメインを追加する場合は group パターン（Repository → Service → Handler）を踏襲する。`GroupRelationRepository` のような補助 repository が増えた場合は `NewXxxWithRelation` パターンで追加する。
 
 > **補足**: `mysql.UserRepository` は `group.UserRepository`、`user.UserRepository`、`auth.UserRepository` の 3 つのインターフェースを実装している。複数のサービスから共有されるリポジトリ実装は 1 つのインスタンスを共有して DI する。
 

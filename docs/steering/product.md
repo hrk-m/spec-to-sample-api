@@ -38,7 +38,7 @@
 
 - `GET /api/v1/groups/:id` — 指定 ID のグループ詳細を返すエンドポイント
   - パスパラメータ: `id`（グループ ID、1 以上の整数）
-  - レスポンス: グループ情報（id, name, description, member_count）
+  - レスポンス: グループ情報（id, name, description, member_count, subgroups）。`subgroups` は直属の子グループ一覧（各要素: id, name, description, member_count）で、子グループが存在しない場合は空配列を返す
   - エラー: 不正な ID → 400、存在しない ID → 404
 
 ### グループ作成
@@ -114,12 +114,25 @@
   - レスポンス: 204 No Content
   - エラー: 不正な ID/パラメータ → 400、グループ未存在 → 404、非メンバーの user_id が含まれる → 404
 
+### サブグループ追加
+
+- `POST /api/v1/groups/:id/subgroups` — 指定グループを親とするサブグループ関係を作成するエンドポイント
+  - パスパラメータ: `id`（親グループ ID、1 以上の整数）
+  - リクエストボディ: `{"child_group_id": uint64}`
+  - バリデーション: `child_group_id` は 1 以上の整数であること。親グループと子グループが同一でないこと。循環参照が発生しないこと。コンポーネント内グループ数が 10 以下であること。最大パス長（ノード数）が 5 以下であること
+  - 内部動作: `group_relations` テーブルに `(parent_group_id, child_group_id)` を INSERT する。WITH RECURSIVE CTE で祖先・子孫・コンポーネントサイズ・最大深度を検証してから INSERT する
+  - レスポンス: 作成された関係情報（parent_group_id, child_group_id）(201)
+  - エラー: 不正な ID/パラメータ（循環・サイズ超過・深度超過・自己参照含む）→ 400、親グループ未存在 → 404、子グループ未存在 → 404、既に関係が存在 → 400（ErrConflict を ErrBadParamInput に変換）
+
 ## ドメインモデル
 
 - **Group**: id, name, description, member_count
 - **User**: id, uuid, first_name, last_name
+- **GroupRelation**: parent_group_id, child_group_id
 
 > **補足**: `User` はメンバー一覧（`GET /api/v1/groups/:id/members`）、未所属ユーザー一覧（`GET /api/v1/groups/:id/non-members`）、グループメンバー追加レスポンス（`POST /api/v1/groups/:id/members`）、認証レスポンス（`GET /api/v1/me`）のすべてで使用する。`GroupMember` という別型は存在せず、`domain.User` で統一している。`uuid` フィールドは `users` テーブルの `uuid` カラム（VARCHAR(36), UNIQUE）に対応し、`db/migrate/20260415120000_add_uuid_to_users.up.sql` で追加された。
+
+> **補足**: `GroupRelation` は `domain/group_relation.go` に定義されており、`POST /api/v1/groups/:id/subgroups` のレスポンスとして使用される。`group_relations` テーブルは `db/migrate/20260425000000_create_group_relations.up.sql` で作成された（UNIQUE KEY: `(parent_group_id, child_group_id)`、外部キー: `groups(id) ON DELETE CASCADE`）。
 
 ## ユーザーとユースケース
 
