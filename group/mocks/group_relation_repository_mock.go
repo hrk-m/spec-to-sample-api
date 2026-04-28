@@ -43,3 +43,8 @@ func (m *MockGroupRelationRepository) ListChildren(ctx context.Context, parentGr
 	args := m.Called(ctx, parentGroupID)
 	return args.Get(0).([]domain.Group), args.Error(1)
 }
+
+func (m *MockGroupRelationRepository) DeleteRelation(ctx context.Context, parentGroupID, childGroupID uint64) error {
+	args := m.Called(ctx, parentGroupID, childGroupID)
+	return args.Error(0)
+}

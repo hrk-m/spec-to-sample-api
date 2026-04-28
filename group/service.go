@@ -49,6 +49,7 @@ type GroupRelationRepository interface {
 	MaxDepthInComponent(ctx context.Context, parentGroupID, childGroupID uint64) (int, error)
 	CreateRelation(ctx context.Context, parentGroupID, childGroupID uint64) (domain.GroupRelation, error)
 	ListChildren(ctx context.Context, parentGroupID uint64) ([]domain.Group, error)
+	DeleteRelation(ctx context.Context, parentGroupID, childGroupID uint64) error
 }
 
 // Service handles group business logic.
@@ -293,6 +294,11 @@ func (s *Service) CreateSubGroup(ctx context.Context, parentGroupID, childGroupI
 	}
 
 	return s.relationRepo.CreateRelation(ctx, parentGroupID, childGroupID)
+}
+
+// DeleteSubGroup removes the parent-child relation between the given groups.
+func (s *Service) DeleteSubGroup(ctx context.Context, parentGroupID, childGroupID uint64) error {
+	return s.relationRepo.DeleteRelation(ctx, parentGroupID, childGroupID)
 }
 
 // deduplicateUint64 returns a new slice with duplicate values removed, preserving order.

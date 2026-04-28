@@ -65,3 +65,8 @@ func (m *MockGroupService) CreateSubGroup(ctx context.Context, parentGroupID, ch
 	args := m.Called(ctx, parentGroupID, childGroupID)
 	return args.Get(0).(domain.GroupRelation), args.Error(1)
 }
+
+func (m *MockGroupService) DeleteSubGroup(ctx context.Context, parentGroupID, childGroupID uint64) error {
+	args := m.Called(ctx, parentGroupID, childGroupID)
+	return args.Error(0)
+}

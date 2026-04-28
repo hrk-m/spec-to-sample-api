@@ -23,6 +23,7 @@ type GroupService interface {
 	AddGroupMembers(ctx context.Context, groupID uint64, userIDs []uint64) ([]domain.User, error)
 	RemoveGroupMembers(ctx context.Context, groupID uint64, userIDs []uint64) error
 	CreateSubGroup(ctx context.Context, parentGroupID, childGroupID uint64) (domain.GroupRelation, error)
+	DeleteSubGroup(ctx context.Context, parentGroupID, childGroupID uint64) error
 }
 
 // GroupHandler handles HTTP requests for the group endpoints.
@@ -43,6 +44,7 @@ func NewGroupHandler(g *echo.Group, svc GroupService) {
 	g.PUT("/groups/:id", h.Update)
 	g.DELETE("/groups/:id", h.Delete)
 	g.DELETE("/groups/:id/members", h.DeleteGroupMembers)
+	g.DELETE("/groups/:id/subgroups/:childId", h.DeleteSubGroup)
 }
 
 type groupListResponse struct {
@@ -340,6 +342,31 @@ func (h *GroupHandler) CreateSubGroup(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusCreated, result)
+}
+
+// DeleteSubGroup handles DELETE /api/v1/groups/:id/subgroups/:childId.
+func (h *GroupHandler) DeleteSubGroup(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	id, err := parsePathID(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+	}
+
+	childID, err := parsePathID(c.Param("childId"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+	}
+
+	if _, ok := c.Get("authUser").(domain.User); !ok {
+		return c.JSON(http.StatusUnauthorized, ResponseError{Message: "Unauthorized"})
+	}
+
+	if err := h.Service.DeleteSubGroup(ctx, id, childID); err != nil {
+		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+	}
+
+	return c.NoContent(http.StatusNoContent)
 }
 
 // AddGroupMembers handles POST /api/v1/groups/:id/members.

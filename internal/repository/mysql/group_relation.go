@@ -205,6 +205,31 @@ ORDER BY g.id`
 	return groups, nil
 }
 
+// DeleteRelation removes the parent-child relation from group_relations.
+// It returns domain.ErrNotFound if the relation does not exist (RowsAffected == 0).
+func (r *GroupRelationRepository) DeleteRelation(ctx context.Context, parentGroupID, childGroupID uint64) error {
+	result, err := r.db.ExecContext(
+		ctx,
+		"DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?",
+		parentGroupID,
+		childGroupID,
+	)
+	if err != nil {
+		return domain.ErrInternalServerError
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return domain.ErrInternalServerError
+	}
+
+	if rowsAffected == 0 {
+		return domain.ErrNotFound
+	}
+
+	return nil
+}
+
 // CreateRelation inserts a new parent-child relation into group_relations.
 func (r *GroupRelationRepository) CreateRelation(ctx context.Context, parentGroupID, childGroupID uint64) (domain.GroupRelation, error) {
 	_, err := r.db.ExecContext(

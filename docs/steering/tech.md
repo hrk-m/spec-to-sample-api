@@ -113,6 +113,8 @@ type AuthService interface {
 
 `CreateSubGroup` は service 層でバリデーション（自己参照・循環検出・コンポーネントサイズ上限・最大深度）を行い、`GroupRelationRepository.CreateRelation` を呼ぶ。handler 層で `ErrConflict`（重複 INSERT）を `ErrBadParamInput` に変換して 400 を返す（ステータスコードは `getStatusCode` 経由、message は `domain.ErrBadParamInput.Error()` を使用）。定数: `maxComponentGroups = 10`、`maxDepthNodes = 5`。
 
+`DeleteSubGroup` は service 層のバリデーションなしで直接 `GroupRelationRepository.DeleteRelation` を呼ぶ。repository 層で `RowsAffected() == 0` の場合は `ErrNotFound` を返す。handler 層では `parentGroupID`（`:id`）と `childGroupID`（`:childId`）の両方を `parsePathID` でパースし、認証ユーザーの存在確認を行ってから service を呼ぶ。成功時は `204 No Content` を返す。
+
 ## リポジトリインターフェース（`GroupRepository`、`GroupRelationRepository`、`group.UserRepository`、`user.UserRepository`、`auth.UserRepository`）
 
 それぞれのユースケース層が消費側でインターフェースを宣言する。
@@ -140,6 +142,7 @@ type GroupRelationRepository interface {
     MaxDepthInComponent(ctx context.Context, parentGroupID, childGroupID uint64) (int, error)
     CreateRelation(ctx context.Context, parentGroupID, childGroupID uint64) (domain.GroupRelation, error)
     ListChildren(ctx context.Context, parentGroupID uint64) ([]domain.Group, error)
+    DeleteRelation(ctx context.Context, parentGroupID, childGroupID uint64) error
 }
 
 // group.UserRepository はグループサービスが使うユーザーデータアクセスのインターフェース（group/service.go で宣言）
@@ -173,4 +176,4 @@ type UserRepository interface {
 
 > **補足**: `mysql.UserRepository` は `group.UserRepository`（`CountByIDs`）、`user.UserRepository`（`ListUsers`・`GetByID`）、`auth.UserRepository`（`GetByUUID`）の 3 つのインターフェースを実装する単一の struct。`GetByID` は `user.UserRepository` インターフェースの一部として `GET /api/v1/users/:id` のユーザー単件取得に使用される。`app/main.go` で `mysqlRepo.NewUserRepository(db)` で 1 インスタンスを生成し、`group.NewServiceWithRelation`・`user.NewService`・`auth.NewService` の 3 つに渡す。
 
-`GroupRelationRepository` の各メソッドは WITH RECURSIVE CTE を使用する。`GetAncestorIDs` / `GetDescendantIDs` は有向グラフを再帰的に辿り祖先・子孫の ID を返す。`CountComponentGroups` は無向グラフとして辿り連結成分内のノード数を返す。`MaxDepthInComponent` は仮想エッジを追加した状態でルートから葉までの最大ノード数を返す。`ListChildren` は直属の子グループを `groups` テーブルから JOIN して返す。`CreateRelation` は UNIQUE 制約違反（エラーコード 1062）を `ErrConflict` にマッピングする。
+`GroupRelationRepository` の各メソッドは WITH RECURSIVE CTE を使用する。`GetAncestorIDs` / `GetDescendantIDs` は有向グラフを再帰的に辿り祖先・子孫の ID を返す。`CountComponentGroups` は無向グラフとして辿り連結成分内のノード数を返す。`MaxDepthInComponent` は仮想エッジを追加した状態でルートから葉までの最大ノード数を返す。`ListChildren` は直属の子グループを `groups` テーブルから JOIN して返す。`CreateRelation` は UNIQUE 制約違反（エラーコード 1062）を `ErrConflict` にマッピングする。`DeleteRelation` は `DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?` を実行し、`RowsAffected() == 0` の場合は `ErrNotFound` を返す。

@@ -124,6 +124,15 @@
   - レスポンス: 作成された関係情報（parent_group_id, child_group_id）(201)
   - エラー: 不正な ID/パラメータ（循環・サイズ超過・深度超過・自己参照含む）→ 400、親グループ未存在 → 404、子グループ未存在 → 404、既に関係が存在 → 400（ErrConflict を ErrBadParamInput に変換）
 
+### サブグループ削除
+
+- `DELETE /api/v1/groups/:id/subgroups/:childId` — 指定グループ間の親子関係を削除するエンドポイント
+  - パスパラメータ: `id`（親グループ ID、1 以上の整数）、`childId`（子グループ ID、1 以上の整数）
+  - バリデーション: `id`・`childId` ともに 1 以上の整数であること
+  - 内部動作: `group_relations` テーブルから `(parent_group_id = id, child_group_id = childId)` のレコードを DELETE する
+  - レスポンス: 204 No Content
+  - エラー: 不正な ID → 400、指定した親子関係が存在しない → 404
+
 ## ドメインモデル
 
 - **Group**: id, name, description, member_count
