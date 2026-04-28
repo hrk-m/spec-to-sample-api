@@ -27,7 +27,7 @@ func TestGroupHandler_GetByID_OK(t *testing.T) {
 
 	svc := new(mocks.MockGroupService)
 	resp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 5}
-	svc.On("GetByID", mock.Anything, uint64(1)).Return(resp, nil)
+	svc.On("GetByID", mock.Anything, uint64(1)).Return(resp, []domain.Group{}, nil)
 
 	h := &rest.GroupHandler{Service: svc}
 	err := h.GetByID(c)
@@ -35,11 +35,62 @@ func TestGroupHandler_GetByID_OK(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	var result domain.Group
+	var result struct {
+		ID          uint64        `json:"id"`
+		Name        string        `json:"name"`
+		Description string        `json:"description"`
+		MemberCount int           `json:"member_count"`
+		Subgroups   []domain.Group `json:"subgroups"`
+	}
 	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
 	assert.Equal(t, uint64(1), result.ID)
 	assert.Equal(t, "dev-team", result.Name)
 	assert.Equal(t, 5, result.MemberCount)
+	assert.NotNil(t, result.Subgroups)
+	assert.Empty(t, result.Subgroups)
+	svc.AssertExpectations(t)
+}
+
+func TestGroupHandler_GetByID_WithSubgroups(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/1", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+
+	svc := new(mocks.MockGroupService)
+	resp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 5}
+	subgroups := []domain.Group{
+		{ID: 2, Name: "Frontend Team", Description: "FE チーム", MemberCount: 3},
+		{ID: 3, Name: "Backend Team", Description: "BE チーム", MemberCount: 4},
+	}
+	svc.On("GetByID", mock.Anything, uint64(1)).Return(resp, subgroups, nil)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.GetByID(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var result struct {
+		ID          uint64 `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		MemberCount int    `json:"member_count"`
+		Subgroups   []struct {
+			ID          uint64 `json:"id"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			MemberCount int    `json:"member_count"`
+		} `json:"subgroups"`
+	}
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, uint64(1), result.ID)
+	assert.Len(t, result.Subgroups, 2)
+	assert.Equal(t, uint64(2), result.Subgroups[0].ID)
+	assert.Equal(t, "Frontend Team", result.Subgroups[0].Name)
 	svc.AssertExpectations(t)
 }
 
@@ -114,7 +165,7 @@ func TestGroupHandler_GetByID_NotFound(t *testing.T) {
 
 	svc := new(mocks.MockGroupService)
 	svc.On("GetByID", mock.Anything, uint64(9999)).
-		Return(domain.Group{}, domain.ErrNotFound)
+		Return(domain.Group{}, []domain.Group(nil), domain.ErrNotFound)
 
 	h := &rest.GroupHandler{Service: svc}
 	err := h.GetByID(c)
@@ -139,7 +190,7 @@ func TestGroupHandler_GetByID_InternalError(t *testing.T) {
 
 	svc := new(mocks.MockGroupService)
 	svc.On("GetByID", mock.Anything, uint64(1)).
-		Return(domain.Group{}, domain.ErrInternalServerError)
+		Return(domain.Group{}, []domain.Group(nil), domain.ErrInternalServerError)
 
 	h := &rest.GroupHandler{Service: svc}
 	err := h.GetByID(c)
@@ -1659,3 +1710,240 @@ func TestGroupHandler_DeleteGroupMembers_InternalError(t *testing.T) {
 	assert.Equal(t, "internal server error", result["message"])
 	svc.AssertExpectations(t)
 }
+
+// --- CreateSubGroup handler tests (#1-#9) ---
+
+const createSubGroupBody = `{"child_group_id":2}`
+
+// #1: 正常系 — 有効な parentGroupID + childGroupID で 201 Created。
+func TestGroupHandler_CreateSubGroup_OK(t *testing.T) {
+	e := echo.New()
+	body := createSubGroupBody
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/1/subgroups", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+
+	svc := new(mocks.MockGroupService)
+	expected := domain.GroupRelation{ParentGroupID: 1, ChildGroupID: 2}
+	svc.On("CreateSubGroup", mock.Anything, uint64(1), uint64(2)).Return(expected, nil)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.CreateSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusCreated, rec.Code)
+
+	var result domain.GroupRelation
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, uint64(1), result.ParentGroupID)
+	assert.Equal(t, uint64(2), result.ChildGroupID)
+	svc.AssertExpectations(t)
+}
+
+// #2: 異常系 — authUser を取得できない（401）。
+func TestGroupHandler_CreateSubGroup_Unauthorized(t *testing.T) {
+	e := echo.New()
+	body := createSubGroupBody
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/1/subgroups", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+	// authUser not set
+
+	h := &rest.GroupHandler{Service: new(mocks.MockGroupService)}
+	err := h.CreateSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "Unauthorized", result["message"])
+}
+
+// #3: 異常系 — id が文字列（400）。
+func TestGroupHandler_CreateSubGroup_InvalidIDString(t *testing.T) {
+	e := echo.New()
+	body := createSubGroupBody
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/abc/subgroups", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("abc")
+
+	h := &rest.GroupHandler{Service: new(mocks.MockGroupService)}
+	err := h.CreateSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "given param is not valid", result["message"])
+}
+
+// #4: 境界値 — id=0（最小境界外、400）。
+func TestGroupHandler_CreateSubGroup_IDZero(t *testing.T) {
+	e := echo.New()
+	body := createSubGroupBody
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/0/subgroups", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("0")
+
+	h := &rest.GroupHandler{Service: new(mocks.MockGroupService)}
+	err := h.CreateSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "given param is not valid", result["message"])
+}
+
+// #5: 異常系 — 不正 JSON body（400）。
+func TestGroupHandler_CreateSubGroup_InvalidJSON(t *testing.T) {
+	e := echo.New()
+	body := `{invalid}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/1/subgroups", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+
+	h := &rest.GroupHandler{Service: new(mocks.MockGroupService)}
+	err := h.CreateSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// #6: 異常系 — service が ErrBadParamInput を返す（400）。
+func TestGroupHandler_CreateSubGroup_ServiceBadParam(t *testing.T) {
+	e := echo.New()
+	body := `{"child_group_id":1}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/1/subgroups", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+
+	svc := new(mocks.MockGroupService)
+	svc.On("CreateSubGroup", mock.Anything, uint64(1), uint64(1)).Return(domain.GroupRelation{}, domain.ErrBadParamInput)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.CreateSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "given param is not valid", result["message"])
+	svc.AssertExpectations(t)
+}
+
+// #7: 異常系 — service が ErrNotFound を返す（404）。
+func TestGroupHandler_CreateSubGroup_ServiceNotFound(t *testing.T) {
+	e := echo.New()
+	body := `{"child_group_id":9999}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/1/subgroups", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+
+	svc := new(mocks.MockGroupService)
+	svc.On("CreateSubGroup", mock.Anything, uint64(1), uint64(9999)).Return(domain.GroupRelation{}, domain.ErrNotFound)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.CreateSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "your requested item is not found", result["message"])
+	svc.AssertExpectations(t)
+}
+
+// #8: 異常系 — service が ErrConflict を返す（409）。
+func TestGroupHandler_CreateSubGroup_ServiceConflict(t *testing.T) {
+	e := echo.New()
+	body := createSubGroupBody
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/1/subgroups", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+
+	svc := new(mocks.MockGroupService)
+	svc.On("CreateSubGroup", mock.Anything, uint64(1), uint64(2)).Return(domain.GroupRelation{}, domain.ErrConflict)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.CreateSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusConflict, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "given param is not valid", result["message"])
+	svc.AssertExpectations(t)
+}
+
+// #9: 例外処理 — service が ErrInternalServerError を返す（500）。
+func TestGroupHandler_CreateSubGroup_ServiceInternalError(t *testing.T) {
+	e := echo.New()
+	body := createSubGroupBody
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups/1/subgroups", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+
+	svc := new(mocks.MockGroupService)
+	svc.On("CreateSubGroup", mock.Anything, uint64(1), uint64(2)).Return(domain.GroupRelation{}, domain.ErrInternalServerError)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.CreateSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "internal server error", result["message"])
+	svc.AssertExpectations(t)
+}
+

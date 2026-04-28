@@ -98,3 +98,7 @@ INSERT IGNORE INTO group_members (id, group_id, user_id) VALUES
 (43, 26, 13),
 (44, 28, 14),
 (45, 30, 15);
+
+-- group_relations
+INSERT IGNORE INTO group_relations (parent_group_id, child_group_id) VALUES
+(5, 6);

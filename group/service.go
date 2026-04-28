@@ -18,6 +18,9 @@ const (
 	maxMemberLimit = 500
 
 	maxNameLength = 100
+
+	maxComponentGroups = 10
+	maxDepthNodes      = 5
 )
 
 // GroupRepository defines the interface for group data access.
@@ -38,10 +41,21 @@ type UserRepository interface {
 	CountByIDs(ctx context.Context, ids []uint64) (int, error)
 }
 
+// GroupRelationRepository defines the interface for group relation data access.
+type GroupRelationRepository interface {
+	GetAncestorIDs(ctx context.Context, groupID uint64) ([]uint64, error)
+	GetDescendantIDs(ctx context.Context, groupID uint64) ([]uint64, error)
+	CountComponentGroups(ctx context.Context, groupID uint64) (int, error)
+	MaxDepthInComponent(ctx context.Context, parentGroupID, childGroupID uint64) (int, error)
+	CreateRelation(ctx context.Context, parentGroupID, childGroupID uint64) (domain.GroupRelation, error)
+	ListChildren(ctx context.Context, parentGroupID uint64) ([]domain.Group, error)
+}
+
 // Service handles group business logic.
 type Service struct {
-	repo     GroupRepository
-	userRepo UserRepository
+	repo        GroupRepository
+	userRepo    UserRepository
+	relationRepo GroupRelationRepository
 }
 
 // NewService returns a new Service instance.
@@ -49,13 +63,36 @@ func NewService(repo GroupRepository, userRepo UserRepository) *Service {
 	return &Service{repo: repo, userRepo: userRepo}
 }
 
-// GetByID returns a group by its ID.
-func (s *Service) GetByID(ctx context.Context, id uint64) (domain.Group, error) {
+// NewServiceWithRelation returns a new Service instance with a GroupRelationRepository.
+func NewServiceWithRelation(repo GroupRepository, userRepo UserRepository, relationRepo GroupRelationRepository) *Service {
+	return &Service{repo: repo, userRepo: userRepo, relationRepo: relationRepo}
+}
+
+// GetByID returns a group by its ID along with its direct child subgroups.
+func (s *Service) GetByID(ctx context.Context, id uint64) (domain.Group, []domain.Group, error) {
 	if id < minID {
-		return domain.Group{}, domain.ErrBadParamInput
+		return domain.Group{}, nil, domain.ErrBadParamInput
 	}
 
-	return s.repo.GetByID(ctx, id)
+	grp, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return domain.Group{}, nil, err
+	}
+
+	if s.relationRepo == nil {
+		return grp, []domain.Group{}, nil
+	}
+
+	children, err := s.relationRepo.ListChildren(ctx, id)
+	if err != nil {
+		return domain.Group{}, nil, domain.ErrInternalServerError
+	}
+
+	if children == nil {
+		children = []domain.Group{}
+	}
+
+	return grp, children, nil
 }
 
 // ListGroupMembers returns a paginated list of members for a group.
@@ -189,6 +226,73 @@ func (s *Service) RemoveGroupMembers(ctx context.Context, groupID uint64, userID
 	}
 
 	return s.repo.RemoveGroupMembers(ctx, groupID, userIDs)
+}
+
+// CreateSubGroup adds child as a subgroup of parent after validating constraints.
+func (s *Service) CreateSubGroup(ctx context.Context, parentGroupID, childGroupID uint64) (domain.GroupRelation, error) {
+	if childGroupID < minID {
+		return domain.GroupRelation{}, domain.ErrBadParamInput
+	}
+
+	if parentGroupID == childGroupID {
+		return domain.GroupRelation{}, domain.ErrBadParamInput
+	}
+
+	// Verify parent exists.
+	if _, err := s.repo.GetByID(ctx, parentGroupID); err != nil {
+		return domain.GroupRelation{}, err
+	}
+
+	// Verify child exists.
+	if _, err := s.repo.GetByID(ctx, childGroupID); err != nil {
+		return domain.GroupRelation{}, err
+	}
+
+	// Cycle detection: adding parent→child would create a cycle if child is already an ancestor of parent.
+	// Equivalently: parent's ancestor set must not contain child, and child's descendant set must not contain parent.
+	ancestorIDs, err := s.relationRepo.GetAncestorIDs(ctx, parentGroupID)
+	if err != nil {
+		return domain.GroupRelation{}, err
+	}
+
+	descendantIDs, err := s.relationRepo.GetDescendantIDs(ctx, childGroupID)
+	if err != nil {
+		return domain.GroupRelation{}, err
+	}
+
+	for _, id := range ancestorIDs {
+		if id == childGroupID {
+			return domain.GroupRelation{}, domain.ErrBadParamInput
+		}
+	}
+
+	for _, id := range descendantIDs {
+		if id == parentGroupID {
+			return domain.GroupRelation{}, domain.ErrBadParamInput
+		}
+	}
+
+	// Connected component size check (after adding: +1 for child's component).
+	componentCount, err := s.relationRepo.CountComponentGroups(ctx, parentGroupID)
+	if err != nil {
+		return domain.GroupRelation{}, err
+	}
+
+	if componentCount+1 > maxComponentGroups {
+		return domain.GroupRelation{}, domain.ErrBadParamInput
+	}
+
+	// Depth check.
+	maxDepth, err := s.relationRepo.MaxDepthInComponent(ctx, parentGroupID, childGroupID)
+	if err != nil {
+		return domain.GroupRelation{}, err
+	}
+
+	if maxDepth > maxDepthNodes {
+		return domain.GroupRelation{}, domain.ErrBadParamInput
+	}
+
+	return s.relationRepo.CreateRelation(ctx, parentGroupID, childGroupID)
 }
 
 // deduplicateUint64 returns a new slice with duplicate values removed, preserving order.

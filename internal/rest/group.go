@@ -3,6 +3,7 @@ package rest
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -13,7 +14,7 @@ import (
 // GroupService defines the interface for the group use case.
 type GroupService interface {
 	ListGroups(ctx context.Context, q string, limit, offset int) ([]domain.Group, int, error)
-	GetByID(ctx context.Context, id uint64) (domain.Group, error)
+	GetByID(ctx context.Context, id uint64) (domain.Group, []domain.Group, error)
 	ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.User, int, error)
 	Store(ctx context.Context, name, description string, userID uint64) (domain.Group, error)
 	Update(ctx context.Context, id uint64, name, description string, userID uint64) (*domain.Group, error)
@@ -21,6 +22,7 @@ type GroupService interface {
 	ListNonGroupMembers(ctx context.Context, groupID uint64, limit, offset int, q string) ([]domain.User, int, error)
 	AddGroupMembers(ctx context.Context, groupID uint64, userIDs []uint64) ([]domain.User, error)
 	RemoveGroupMembers(ctx context.Context, groupID uint64, userIDs []uint64) error
+	CreateSubGroup(ctx context.Context, parentGroupID, childGroupID uint64) (domain.GroupRelation, error)
 }
 
 // GroupHandler handles HTTP requests for the group endpoints.
@@ -37,6 +39,7 @@ func NewGroupHandler(g *echo.Group, svc GroupService) {
 	g.GET("/groups/:id/non-members", h.ListNonGroupMembers)
 	g.POST("/groups", h.Store)
 	g.POST("/groups/:id/members", h.AddGroupMembers)
+	g.POST("/groups/:id/subgroups", h.CreateSubGroup)
 	g.PUT("/groups/:id", h.Update)
 	g.DELETE("/groups/:id", h.Delete)
 	g.DELETE("/groups/:id/members", h.DeleteGroupMembers)
@@ -77,6 +80,25 @@ type removeGroupMembersRequest struct {
 
 type addGroupMembersResponse struct {
 	Members []domain.User `json:"members"`
+}
+
+type createSubGroupRequest struct {
+	ChildGroupID uint64 `json:"child_group_id"`
+}
+
+type subgroupSummary struct {
+	ID          uint64 `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	MemberCount int    `json:"member_count"`
+}
+
+type getGroupResponse struct {
+	ID          uint64            `json:"id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	MemberCount int               `json:"member_count"`
+	Subgroups   []subgroupSummary `json:"subgroups"`
 }
 
 // Store handles POST /api/v1/groups.
@@ -158,12 +180,28 @@ func (h *GroupHandler) GetByID(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
 	}
 
-	result, err := h.Service.GetByID(ctx, id)
+	grp, children, err := h.Service.GetByID(ctx, id)
 	if err != nil {
 		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
 	}
 
-	return c.JSON(http.StatusOK, result)
+	subs := make([]subgroupSummary, 0, len(children))
+	for _, g := range children {
+		subs = append(subs, subgroupSummary{
+			ID:          g.ID,
+			Name:        g.Name,
+			Description: g.Description,
+			MemberCount: g.MemberCount,
+		})
+	}
+
+	return c.JSON(http.StatusOK, getGroupResponse{
+		ID:          grp.ID,
+		Name:        grp.Name,
+		Description: grp.Description,
+		MemberCount: grp.MemberCount,
+		Subgroups:   subs,
+	})
 }
 
 // ListGroupMembers handles GET /api/v1/groups/:id/members.
@@ -271,6 +309,37 @@ func (h *GroupHandler) DeleteGroupMembers(c echo.Context) error {
 	}
 
 	return c.NoContent(http.StatusNoContent)
+}
+
+// CreateSubGroup handles POST /api/v1/groups/:id/subgroups.
+func (h *GroupHandler) CreateSubGroup(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	id, err := parsePathID(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+	}
+
+	if _, ok := c.Get("authUser").(domain.User); !ok {
+		return c.JSON(http.StatusUnauthorized, ResponseError{Message: "Unauthorized"})
+	}
+
+	var req createSubGroupRequest
+	if bindErr := c.Bind(&req); bindErr != nil {
+		return c.JSON(http.StatusBadRequest, ResponseError{Message: bindErr.Error()})
+	}
+
+	result, err := h.Service.CreateSubGroup(ctx, id, req.ChildGroupID)
+	if err != nil {
+		status := getStatusCode(err)
+		message := err.Error()
+		if errors.Is(err, domain.ErrConflict) {
+			message = domain.ErrBadParamInput.Error()
+		}
+		return c.JSON(status, ResponseError{Message: message})
+	}
+
+	return c.JSON(http.StatusCreated, result)
 }
 
 // AddGroupMembers handles POST /api/v1/groups/:id/members.
