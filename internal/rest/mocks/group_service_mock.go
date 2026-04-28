@@ -19,9 +19,10 @@ func (m *MockGroupService) ListGroups(ctx context.Context, q string, limit, offs
 	return args.Get(0).([]domain.Group), args.Int(1), args.Error(2)
 }
 
-func (m *MockGroupService) GetByID(ctx context.Context, id uint64) (domain.Group, error) {
+func (m *MockGroupService) GetByID(ctx context.Context, id uint64) (domain.Group, []domain.Group, error) {
 	args := m.Called(ctx, id)
-	return args.Get(0).(domain.Group), args.Error(1)
+	groups, _ := args.Get(1).([]domain.Group)
+	return args.Get(0).(domain.Group), groups, args.Error(2)
 }
 
 func (m *MockGroupService) ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.User, int, error) {
@@ -58,4 +59,9 @@ func (m *MockGroupService) AddGroupMembers(ctx context.Context, groupID uint64, 
 func (m *MockGroupService) RemoveGroupMembers(ctx context.Context, groupID uint64, userIDs []uint64) error {
 	args := m.Called(ctx, groupID, userIDs)
 	return args.Error(0)
+}
+
+func (m *MockGroupService) CreateSubGroup(ctx context.Context, parentGroupID, childGroupID uint64) (domain.GroupRelation, error) {
+	args := m.Called(ctx, parentGroupID, childGroupID)
+	return args.Get(0).(domain.GroupRelation), args.Error(1)
 }

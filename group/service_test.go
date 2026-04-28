@@ -12,55 +12,96 @@ import (
 	"github.com/hrk-m/spec-to-dev-workflow/sample-api/group/mocks"
 )
 
-func TestService_GetByID_OK(t *testing.T) {
+func newGetByIDService(t *testing.T) (*group.Service, *mocks.MockGroupRepository, *mocks.MockGroupRelationRepository) {
+	t.Helper()
 	repo := new(mocks.MockGroupRepository)
 	userRepo := new(mocks.MockUserRepository)
-	svc := group.NewService(repo, userRepo)
+	relRepo := new(mocks.MockGroupRelationRepository)
+	svc := group.NewServiceWithRelation(repo, userRepo, relRepo)
+	return svc, repo, relRepo
+}
+
+func TestService_GetByID_WithSubgroups(t *testing.T) {
+	svc, repo, relRepo := newGetByIDService(t)
 
 	expected := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 5}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(expected, nil)
 
-	result, err := svc.GetByID(context.Background(), 1)
+	children := []domain.Group{
+		{ID: 2, Name: "Frontend Team", Description: "", MemberCount: 2},
+		{ID: 3, Name: "Backend Team", Description: "", MemberCount: 3},
+	}
+	relRepo.On("ListChildren", mock.Anything, uint64(1)).Return(children, nil)
+
+	result, subgroups, err := svc.GetByID(context.Background(), 1)
 
 	assert.NoError(t, err)
 	assert.Equal(t, expected, result)
+	assert.Len(t, subgroups, 2)
+	assert.Equal(t, uint64(2), subgroups[0].ID)
 	repo.AssertExpectations(t)
+	relRepo.AssertExpectations(t)
+}
+
+func TestService_GetByID_SubgroupsEmpty(t *testing.T) {
+	svc, repo, relRepo := newGetByIDService(t)
+
+	expected := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 5}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(expected, nil)
+	relRepo.On("ListChildren", mock.Anything, uint64(1)).Return([]domain.Group{}, nil)
+
+	result, subgroups, err := svc.GetByID(context.Background(), 1)
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, result)
+	assert.NotNil(t, subgroups)
+	assert.Empty(t, subgroups)
+	repo.AssertExpectations(t)
+	relRepo.AssertExpectations(t)
+}
+
+func TestService_GetByID_ListChildrenError(t *testing.T) {
+	svc, repo, relRepo := newGetByIDService(t)
+
+	expected := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 5}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(expected, nil)
+	relRepo.On("ListChildren", mock.Anything, uint64(1)).Return([]domain.Group(nil), domain.ErrInternalServerError)
+
+	_, _, err := svc.GetByID(context.Background(), 1)
+
+	assert.ErrorIs(t, err, domain.ErrInternalServerError)
+	repo.AssertExpectations(t)
+	relRepo.AssertExpectations(t)
 }
 
 func TestService_GetByID_NotFound(t *testing.T) {
-	repo := new(mocks.MockGroupRepository)
-	userRepo := new(mocks.MockUserRepository)
-	svc := group.NewService(repo, userRepo)
+	svc, repo, _ := newGetByIDService(t)
 
 	repo.On("GetByID", mock.Anything, uint64(9999)).
 		Return(domain.Group{}, domain.ErrNotFound)
 
-	_, err := svc.GetByID(context.Background(), 9999)
+	_, _, err := svc.GetByID(context.Background(), 9999)
 
 	assert.ErrorIs(t, err, domain.ErrNotFound)
 	repo.AssertExpectations(t)
 }
 
 func TestService_GetByID_InvalidID(t *testing.T) {
-	repo := new(mocks.MockGroupRepository)
-	userRepo := new(mocks.MockUserRepository)
-	svc := group.NewService(repo, userRepo)
+	svc, repo, _ := newGetByIDService(t)
 
-	_, err := svc.GetByID(context.Background(), 0)
+	_, _, err := svc.GetByID(context.Background(), 0)
 
 	assert.ErrorIs(t, err, domain.ErrBadParamInput)
 	repo.AssertNotCalled(t, "GetByID")
 }
 
 func TestService_GetByID_RepositoryError(t *testing.T) {
-	repo := new(mocks.MockGroupRepository)
-	userRepo := new(mocks.MockUserRepository)
-	svc := group.NewService(repo, userRepo)
+	svc, repo, _ := newGetByIDService(t)
 
 	repo.On("GetByID", mock.Anything, uint64(1)).
 		Return(domain.Group{}, domain.ErrInternalServerError)
 
-	_, err := svc.GetByID(context.Background(), 1)
+	_, _, err := svc.GetByID(context.Background(), 1)
 
 	assert.ErrorIs(t, err, domain.ErrInternalServerError)
 	repo.AssertExpectations(t)
@@ -940,3 +981,221 @@ func TestService_RemoveGroupMembers_IsolatedViaInterface(t *testing.T) {
 	repo.AssertExpectations(t)
 	userRepo.AssertNotCalled(t, "CountByIDs")
 }
+
+// --- CreateSubGroup tests (#10-#21) ---
+
+func newSubGroupService(t *testing.T) (*group.Service, *mocks.MockGroupRepository, *mocks.MockGroupRelationRepository) {
+	t.Helper()
+	repo := new(mocks.MockGroupRepository)
+	userRepo := new(mocks.MockUserRepository)
+	relRepo := new(mocks.MockGroupRelationRepository)
+	svc := group.NewServiceWithRelation(repo, userRepo, relRepo)
+	return svc, repo, relRepo
+}
+
+// #10: 正常系 — 有効な parentGroupID + childGroupID で登録成功。
+func TestService_CreateSubGroup_OK(t *testing.T) {
+	svc, repo, relRepo := newSubGroupService(t)
+
+	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
+	child := domain.Group{ID: 2, Name: "child", Description: "", MemberCount: 0}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
+	repo.On("GetByID", mock.Anything, uint64(2)).Return(child, nil)
+	relRepo.On("GetAncestorIDs", mock.Anything, uint64(1)).Return([]uint64{}, nil)
+	relRepo.On("GetDescendantIDs", mock.Anything, uint64(2)).Return([]uint64{}, nil)
+	relRepo.On("CountComponentGroups", mock.Anything, uint64(1)).Return(2, nil)
+	relRepo.On("MaxDepthInComponent", mock.Anything, uint64(1), uint64(2)).Return(2, nil)
+	expected := domain.GroupRelation{ParentGroupID: 1, ChildGroupID: 2}
+	relRepo.On("CreateRelation", mock.Anything, uint64(1), uint64(2)).Return(expected, nil)
+
+	result, err := svc.CreateSubGroup(context.Background(), 1, 2)
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, result)
+	repo.AssertExpectations(t)
+	relRepo.AssertExpectations(t)
+}
+
+// #11: 異常系 — child_group_id が 0。
+func TestService_CreateSubGroup_ChildIDZero(t *testing.T) {
+	svc, _, _ := newSubGroupService(t)
+
+	_, err := svc.CreateSubGroup(context.Background(), 1, 0)
+
+	assert.ErrorIs(t, err, domain.ErrBadParamInput)
+}
+
+// #12: 異常系 — 自己ループ（parent == child）。
+func TestService_CreateSubGroup_SelfLoop(t *testing.T) {
+	svc, _, _ := newSubGroupService(t)
+
+	_, err := svc.CreateSubGroup(context.Background(), 1, 1)
+
+	assert.ErrorIs(t, err, domain.ErrBadParamInput)
+}
+
+// #13: 異常系 — parent_group_id が DB に存在しない。
+func TestService_CreateSubGroup_ParentNotFound(t *testing.T) {
+	svc, repo, _ := newSubGroupService(t)
+
+	repo.On("GetByID", mock.Anything, uint64(9999)).Return(domain.Group{}, domain.ErrNotFound)
+
+	_, err := svc.CreateSubGroup(context.Background(), 9999, 2)
+
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+	repo.AssertExpectations(t)
+}
+
+// #14: 異常系 — child_group_id が DB に存在しない。
+func TestService_CreateSubGroup_ChildNotFound(t *testing.T) {
+	svc, repo, _ := newSubGroupService(t)
+
+	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
+	repo.On("GetByID", mock.Anything, uint64(9999)).Return(domain.Group{}, domain.ErrNotFound)
+
+	_, err := svc.CreateSubGroup(context.Background(), 1, 9999)
+
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+	repo.AssertExpectations(t)
+}
+
+// #15: 分岐条件 — 循環参照が検出される（child が parent の祖先）。
+func TestService_CreateSubGroup_CycleDetected(t *testing.T) {
+	svc, repo, relRepo := newSubGroupService(t)
+
+	// parent=2, child=1, 既存: 1→2 なので child=1 の子孫に parent=2 が含まれる
+	parent := domain.Group{ID: 2, Name: "B", Description: "", MemberCount: 0}
+	child := domain.Group{ID: 1, Name: "A", Description: "", MemberCount: 0}
+	repo.On("GetByID", mock.Anything, uint64(2)).Return(parent, nil)
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(child, nil)
+	// parent(2) の祖先に child(1) が含まれる
+	relRepo.On("GetAncestorIDs", mock.Anything, uint64(2)).Return([]uint64{1}, nil)
+	relRepo.On("GetDescendantIDs", mock.Anything, uint64(1)).Return([]uint64{2}, nil)
+
+	_, err := svc.CreateSubGroup(context.Background(), 2, 1)
+
+	assert.ErrorIs(t, err, domain.ErrBadParamInput)
+	repo.AssertExpectations(t)
+	relRepo.AssertExpectations(t)
+}
+
+// #16: 境界値 — ツリーグループ数が 9（追加後 10）→ 成功。
+func TestService_CreateSubGroup_ComponentSizeBoundary_OK(t *testing.T) {
+	svc, repo, relRepo := newSubGroupService(t)
+
+	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
+	child := domain.Group{ID: 10, Name: "child", Description: "", MemberCount: 0}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
+	repo.On("GetByID", mock.Anything, uint64(10)).Return(child, nil)
+	relRepo.On("GetAncestorIDs", mock.Anything, uint64(1)).Return([]uint64{}, nil)
+	relRepo.On("GetDescendantIDs", mock.Anything, uint64(10)).Return([]uint64{}, nil)
+	// 現在 9 グループ → 追加後 10 で OK
+	relRepo.On("CountComponentGroups", mock.Anything, uint64(1)).Return(9, nil)
+	relRepo.On("MaxDepthInComponent", mock.Anything, uint64(1), uint64(10)).Return(2, nil)
+	expected := domain.GroupRelation{ParentGroupID: 1, ChildGroupID: 10}
+	relRepo.On("CreateRelation", mock.Anything, uint64(1), uint64(10)).Return(expected, nil)
+
+	result, err := svc.CreateSubGroup(context.Background(), 1, 10)
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, result)
+}
+
+// #17: 境界値 — ツリーグループ数が 10（追加後 11）→ ErrBadParamInput。
+func TestService_CreateSubGroup_ComponentSizeExceeded(t *testing.T) {
+	svc, repo, relRepo := newSubGroupService(t)
+
+	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
+	child := domain.Group{ID: 11, Name: "child", Description: "", MemberCount: 0}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
+	repo.On("GetByID", mock.Anything, uint64(11)).Return(child, nil)
+	relRepo.On("GetAncestorIDs", mock.Anything, uint64(1)).Return([]uint64{}, nil)
+	relRepo.On("GetDescendantIDs", mock.Anything, uint64(11)).Return([]uint64{}, nil)
+	// 現在 10 グループ → 追加後 11 で NG
+	relRepo.On("CountComponentGroups", mock.Anything, uint64(1)).Return(10, nil)
+
+	_, err := svc.CreateSubGroup(context.Background(), 1, 11)
+
+	assert.ErrorIs(t, err, domain.ErrBadParamInput)
+}
+
+// #18: 境界値 — 階層深度が 4 ノード（追加後 5 ノード）→ 成功。
+func TestService_CreateSubGroup_DepthBoundary_OK(t *testing.T) {
+	svc, repo, relRepo := newSubGroupService(t)
+
+	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
+	child := domain.Group{ID: 2, Name: "child", Description: "", MemberCount: 0}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
+	repo.On("GetByID", mock.Anything, uint64(2)).Return(child, nil)
+	relRepo.On("GetAncestorIDs", mock.Anything, uint64(1)).Return([]uint64{}, nil)
+	relRepo.On("GetDescendantIDs", mock.Anything, uint64(2)).Return([]uint64{}, nil)
+	relRepo.On("CountComponentGroups", mock.Anything, uint64(1)).Return(3, nil)
+	// 追加後の最大深度 5 ノード → OK
+	relRepo.On("MaxDepthInComponent", mock.Anything, uint64(1), uint64(2)).Return(5, nil)
+	expected := domain.GroupRelation{ParentGroupID: 1, ChildGroupID: 2}
+	relRepo.On("CreateRelation", mock.Anything, uint64(1), uint64(2)).Return(expected, nil)
+
+	result, err := svc.CreateSubGroup(context.Background(), 1, 2)
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, result)
+}
+
+// #19: 境界値 — 階層深度が 5 ノード（追加後 6 ノード）→ ErrBadParamInput。
+func TestService_CreateSubGroup_DepthExceeded(t *testing.T) {
+	svc, repo, relRepo := newSubGroupService(t)
+
+	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
+	child := domain.Group{ID: 2, Name: "child", Description: "", MemberCount: 0}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
+	repo.On("GetByID", mock.Anything, uint64(2)).Return(child, nil)
+	relRepo.On("GetAncestorIDs", mock.Anything, uint64(1)).Return([]uint64{}, nil)
+	relRepo.On("GetDescendantIDs", mock.Anything, uint64(2)).Return([]uint64{}, nil)
+	relRepo.On("CountComponentGroups", mock.Anything, uint64(1)).Return(3, nil)
+	// 追加後の最大深度 6 ノード → NG
+	relRepo.On("MaxDepthInComponent", mock.Anything, uint64(1), uint64(2)).Return(6, nil)
+
+	_, err := svc.CreateSubGroup(context.Background(), 1, 2)
+
+	assert.ErrorIs(t, err, domain.ErrBadParamInput)
+}
+
+// #20: 異常系 — repository が ErrConflict を返す（重複登録）。
+func TestService_CreateSubGroup_Conflict(t *testing.T) {
+	svc, repo, relRepo := newSubGroupService(t)
+
+	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
+	child := domain.Group{ID: 2, Name: "child", Description: "", MemberCount: 0}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
+	repo.On("GetByID", mock.Anything, uint64(2)).Return(child, nil)
+	relRepo.On("GetAncestorIDs", mock.Anything, uint64(1)).Return([]uint64{}, nil)
+	relRepo.On("GetDescendantIDs", mock.Anything, uint64(2)).Return([]uint64{}, nil)
+	relRepo.On("CountComponentGroups", mock.Anything, uint64(1)).Return(2, nil)
+	relRepo.On("MaxDepthInComponent", mock.Anything, uint64(1), uint64(2)).Return(2, nil)
+	relRepo.On("CreateRelation", mock.Anything, uint64(1), uint64(2)).Return(domain.GroupRelation{}, domain.ErrConflict)
+
+	_, err := svc.CreateSubGroup(context.Background(), 1, 2)
+
+	assert.ErrorIs(t, err, domain.ErrConflict)
+}
+
+// #21: 例外処理 — repository が DB エラーを返す。
+func TestService_CreateSubGroup_DBError(t *testing.T) {
+	svc, repo, relRepo := newSubGroupService(t)
+
+	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
+	child := domain.Group{ID: 2, Name: "child", Description: "", MemberCount: 0}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
+	repo.On("GetByID", mock.Anything, uint64(2)).Return(child, nil)
+	relRepo.On("GetAncestorIDs", mock.Anything, uint64(1)).Return([]uint64{}, nil)
+	relRepo.On("GetDescendantIDs", mock.Anything, uint64(2)).Return([]uint64{}, nil)
+	relRepo.On("CountComponentGroups", mock.Anything, uint64(1)).Return(2, nil)
+	relRepo.On("MaxDepthInComponent", mock.Anything, uint64(1), uint64(2)).Return(2, nil)
+	relRepo.On("CreateRelation", mock.Anything, uint64(1), uint64(2)).Return(domain.GroupRelation{}, domain.ErrInternalServerError)
+
+	_, err := svc.CreateSubGroup(context.Background(), 1, 2)
+
+	assert.ErrorIs(t, err, domain.ErrInternalServerError)
+}
+

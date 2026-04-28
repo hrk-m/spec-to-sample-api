@@ -96,7 +96,8 @@ func main() {
 
 	groupRepo := mysqlRepo.NewGroupRepository(db)
 	userRepo := mysqlRepo.NewUserRepository(db)
-	gSvc := groupSvc.NewService(groupRepo, userRepo)
+	groupRelationRepo := mysqlRepo.NewGroupRelationRepository(db)
+	gSvc := groupSvc.NewServiceWithRelation(groupRepo, userRepo, groupRelationRepo)
 	uSvc := userSvc.NewService(userRepo)
 
 	apiGroup := e.Group("/api/v1")
