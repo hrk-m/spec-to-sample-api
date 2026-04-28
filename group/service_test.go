@@ -1199,3 +1199,41 @@ func TestService_CreateSubGroup_DBError(t *testing.T) {
 	assert.ErrorIs(t, err, domain.ErrInternalServerError)
 }
 
+// --- DeleteSubGroup tests (#9-#11) ---
+
+// #9: 正常系 — 存在する親子関係を削除する。
+func TestService_DeleteSubGroup_OK(t *testing.T) {
+	svc, _, relRepo := newSubGroupService(t)
+
+	relRepo.On("DeleteRelation", mock.Anything, uint64(1), uint64(2)).Return(nil)
+
+	err := svc.DeleteSubGroup(context.Background(), 1, 2)
+
+	assert.NoError(t, err)
+	relRepo.AssertExpectations(t)
+}
+
+// #10: 異常系 — 対象の親子関係が存在しない（RowsAffected=0）。
+func TestService_DeleteSubGroup_NotFound(t *testing.T) {
+	svc, _, relRepo := newSubGroupService(t)
+
+	relRepo.On("DeleteRelation", mock.Anything, uint64(1), uint64(2)).Return(domain.ErrNotFound)
+
+	err := svc.DeleteSubGroup(context.Background(), 1, 2)
+
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+	relRepo.AssertExpectations(t)
+}
+
+// #11: 例外処理 — repository が DB エラーを返す。
+func TestService_DeleteSubGroup_DBError(t *testing.T) {
+	svc, _, relRepo := newSubGroupService(t)
+
+	relRepo.On("DeleteRelation", mock.Anything, uint64(1), uint64(2)).Return(domain.ErrInternalServerError)
+
+	err := svc.DeleteSubGroup(context.Background(), 1, 2)
+
+	assert.ErrorIs(t, err, domain.ErrInternalServerError)
+	relRepo.AssertExpectations(t)
+}
+

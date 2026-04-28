@@ -1947,3 +1947,204 @@ func TestGroupHandler_CreateSubGroup_ServiceInternalError(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
+// --- DeleteSubGroup handler tests (#1-#8) ---
+
+// #1: 正常系 — 存在する親子関係を削除する（204 No Content）。
+func TestGroupHandler_DeleteSubGroup_OK(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/1/subgroups/2", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups/:childId")
+	c.SetParamNames("id", "childId")
+	c.SetParamValues("1", "2")
+	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+
+	svc := new(mocks.MockGroupService)
+	svc.On("DeleteSubGroup", mock.Anything, uint64(1), uint64(2)).Return(nil)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.DeleteSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	svc.AssertExpectations(t)
+}
+
+// #2: 異常系 — authUser を取得できない（401 Unauthorized）。
+func TestGroupHandler_DeleteSubGroup_NoAuthUser(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/1/subgroups/2", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups/:childId")
+	c.SetParamNames("id", "childId")
+	c.SetParamValues("1", "2")
+	// authUser を設定しない
+
+	svc := new(mocks.MockGroupService)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.DeleteSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "Unauthorized", result["message"])
+	svc.AssertNotCalled(t, "DeleteSubGroup")
+}
+
+// #3: 異常系 — id が文字列（400 Bad Request）。
+func TestGroupHandler_DeleteSubGroup_InvalidID(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/abc/subgroups/2", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups/:childId")
+	c.SetParamNames("id", "childId")
+	c.SetParamValues("abc", "2")
+	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+
+	svc := new(mocks.MockGroupService)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.DeleteSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "given param is not valid", result["message"])
+	svc.AssertNotCalled(t, "DeleteSubGroup")
+}
+
+// #4: 境界値 — id=0（最小境界外）（400 Bad Request）。
+func TestGroupHandler_DeleteSubGroup_IDZero(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/0/subgroups/2", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups/:childId")
+	c.SetParamNames("id", "childId")
+	c.SetParamValues("0", "2")
+	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+
+	svc := new(mocks.MockGroupService)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.DeleteSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "given param is not valid", result["message"])
+	svc.AssertNotCalled(t, "DeleteSubGroup")
+}
+
+// #5: 異常系 — childId が文字列（400 Bad Request）。
+func TestGroupHandler_DeleteSubGroup_InvalidChildID(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/1/subgroups/abc", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups/:childId")
+	c.SetParamNames("id", "childId")
+	c.SetParamValues("1", "abc")
+	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+
+	svc := new(mocks.MockGroupService)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.DeleteSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "given param is not valid", result["message"])
+	svc.AssertNotCalled(t, "DeleteSubGroup")
+}
+
+// #6: 境界値 — childId=0（最小境界外）（400 Bad Request）。
+func TestGroupHandler_DeleteSubGroup_ChildIDZero(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/1/subgroups/0", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups/:childId")
+	c.SetParamNames("id", "childId")
+	c.SetParamValues("1", "0")
+	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+
+	svc := new(mocks.MockGroupService)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.DeleteSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "given param is not valid", result["message"])
+	svc.AssertNotCalled(t, "DeleteSubGroup")
+}
+
+// #7: 異常系 — service が ErrNotFound を返す（404）。
+func TestGroupHandler_DeleteSubGroup_NotFound(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/1/subgroups/2", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups/:childId")
+	c.SetParamNames("id", "childId")
+	c.SetParamValues("1", "2")
+	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+
+	svc := new(mocks.MockGroupService)
+	svc.On("DeleteSubGroup", mock.Anything, uint64(1), uint64(2)).Return(domain.ErrNotFound)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.DeleteSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "your requested item is not found", result["message"])
+	svc.AssertExpectations(t)
+}
+
+// #8: 例外処理 — service が ErrInternalServerError を返す（500）。
+func TestGroupHandler_DeleteSubGroup_InternalError(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/groups/1/subgroups/2", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups/:childId")
+	c.SetParamNames("id", "childId")
+	c.SetParamValues("1", "2")
+	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+
+	svc := new(mocks.MockGroupService)
+	svc.On("DeleteSubGroup", mock.Anything, uint64(1), uint64(2)).Return(domain.ErrInternalServerError)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.DeleteSubGroup(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "internal server error", result["message"])
+	svc.AssertExpectations(t)
+}
+
