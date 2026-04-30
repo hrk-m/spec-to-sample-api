@@ -3,7 +3,6 @@ package rest
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -15,7 +14,7 @@ import (
 type GroupService interface {
 	ListGroups(ctx context.Context, q string, limit, offset int) ([]domain.Group, int, error)
 	GetByID(ctx context.Context, id uint64) (domain.Group, []domain.Group, error)
-	ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.User, int, error)
+	ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.GroupMember, int, error)
 	Store(ctx context.Context, name, description string, userID uint64) (domain.Group, error)
 	Update(ctx context.Context, id uint64, name, description string, userID uint64) (*domain.Group, error)
 	Delete(ctx context.Context, id uint64, userID uint64) error
@@ -52,8 +51,21 @@ type groupListResponse struct {
 	Total  int            `json:"total"`
 }
 
+type sourceGroup struct {
+	GroupID   uint64 `json:"group_id"`
+	GroupName string `json:"group_name"`
+}
+
+type groupMember struct {
+	ID           uint64        `json:"id"`
+	UUID         string        `json:"uuid"`
+	FirstName    string        `json:"first_name"`
+	LastName     string        `json:"last_name"`
+	SourceGroups []sourceGroup `json:"source_groups"`
+}
+
 type groupMemberListResponse struct {
-	Members []domain.User `json:"members"`
+	Members []groupMember `json:"members"`
 	Total   int           `json:"total"`
 }
 
@@ -232,7 +244,23 @@ func (h *GroupHandler) ListGroupMembers(c echo.Context) error {
 		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
 	}
 
-	return c.JSON(http.StatusOK, groupMemberListResponse{Members: members, Total: total})
+	items := make([]groupMember, 0, len(members))
+	for _, m := range members {
+		item := groupMember{
+			ID:           m.ID,
+			UUID:         m.UUID,
+			FirstName:    m.FirstName,
+			LastName:     m.LastName,
+			SourceGroups: make([]sourceGroup, len(m.SourceGroups)),
+		}
+		for i, s := range m.SourceGroups {
+			item.SourceGroups[i] = sourceGroup{GroupID: s.GroupID, GroupName: s.GroupName}
+		}
+
+		items = append(items, item)
+	}
+
+	return c.JSON(http.StatusOK, groupMemberListResponse{Members: items, Total: total})
 }
 
 // ListGroups handles GET /api/v1/groups.
@@ -333,12 +361,7 @@ func (h *GroupHandler) CreateSubGroup(c echo.Context) error {
 
 	result, err := h.Service.CreateSubGroup(ctx, id, req.ChildGroupID)
 	if err != nil {
-		status := getStatusCode(err)
-		message := err.Error()
-		if errors.Is(err, domain.ErrConflict) {
-			message = domain.ErrBadParamInput.Error()
-		}
-		return c.JSON(status, ResponseError{Message: message})
+		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
 	}
 
 	return c.JSON(http.StatusCreated, result)

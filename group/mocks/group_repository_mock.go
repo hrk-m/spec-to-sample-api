@@ -24,9 +24,10 @@ func (m *MockGroupRepository) GetByID(ctx context.Context, id uint64) (domain.Gr
 	return args.Get(0).(domain.Group), args.Error(1)
 }
 
-func (m *MockGroupRepository) ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.User, int, error) {
+func (m *MockGroupRepository) ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.GroupMember, int, error) {
 	args := m.Called(ctx, id, limit, offset, q)
-	return args.Get(0).([]domain.User), args.Int(1), args.Error(2)
+	members, _ := args.Get(0).([]domain.GroupMember)
+	return members, args.Int(1), args.Error(2)
 }
 
 func (m *MockGroupRepository) Store(ctx context.Context, name, description string, userID uint64) (domain.Group, error) {

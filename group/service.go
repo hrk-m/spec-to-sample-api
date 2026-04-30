@@ -27,7 +27,7 @@ const (
 type GroupRepository interface {
 	ListGroups(ctx context.Context, q string, limit, offset int) ([]domain.Group, int, error)
 	GetByID(ctx context.Context, id uint64) (domain.Group, error)
-	ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.User, int, error)
+	ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.GroupMember, int, error)
 	Store(ctx context.Context, name, description string, userID uint64) (domain.Group, error)
 	Update(ctx context.Context, id uint64, name, description string, userID uint64) (*domain.Group, error)
 	Delete(ctx context.Context, id uint64, userID uint64) error
@@ -96,8 +96,8 @@ func (s *Service) GetByID(ctx context.Context, id uint64) (domain.Group, []domai
 	return grp, children, nil
 }
 
-// ListGroupMembers returns a paginated list of members for a group.
-func (s *Service) ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.User, int, error) {
+// ListGroupMembers returns a paginated list of members for a group including all descendants.
+func (s *Service) ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.GroupMember, int, error) {
 	if id < minID {
 		return nil, 0, domain.ErrBadParamInput
 	}
@@ -116,7 +116,7 @@ func (s *Service) ListGroupMembers(ctx context.Context, id uint64, limit, offset
 	}
 
 	if members == nil {
-		members = []domain.User{}
+		members = []domain.GroupMember{}
 	}
 
 	return members, total, nil
