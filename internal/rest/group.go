@@ -51,22 +51,22 @@ type groupListResponse struct {
 	Total  int            `json:"total"`
 }
 
-type groupMemberSourceItem struct {
+type sourceGroup struct {
 	GroupID   uint64 `json:"group_id"`
 	GroupName string `json:"group_name"`
 }
 
-type groupMemberItem struct {
-	ID        uint64                  `json:"id"`
-	UUID      string                  `json:"uuid"`
-	FirstName string                  `json:"first_name"`
-	LastName  string                  `json:"last_name"`
-	Sources   []groupMemberSourceItem `json:"source_groups"`
+type groupMember struct {
+	ID           uint64        `json:"id"`
+	UUID         string        `json:"uuid"`
+	FirstName    string        `json:"first_name"`
+	LastName     string        `json:"last_name"`
+	SourceGroups []sourceGroup `json:"source_groups"`
 }
 
 type groupMemberListResponse struct {
-	Members []groupMemberItem `json:"members"`
-	Total   int               `json:"total"`
+	Members []groupMember `json:"members"`
+	Total   int           `json:"total"`
 }
 
 type storeGroupRequest struct {
@@ -244,17 +244,17 @@ func (h *GroupHandler) ListGroupMembers(c echo.Context) error {
 		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
 	}
 
-	items := make([]groupMemberItem, 0, len(members))
+	items := make([]groupMember, 0, len(members))
 	for _, m := range members {
-		item := groupMemberItem{
-			ID:        m.ID,
-			UUID:      m.UUID,
-			FirstName: m.FirstName,
-			LastName:  m.LastName,
-			Sources:   make([]groupMemberSourceItem, len(m.Sources)),
+		item := groupMember{
+			ID:           m.ID,
+			UUID:         m.UUID,
+			FirstName:    m.FirstName,
+			LastName:     m.LastName,
+			SourceGroups: make([]sourceGroup, len(m.SourceGroups)),
 		}
-		for i, s := range m.Sources {
-			item.Sources[i] = groupMemberSourceItem{GroupID: s.GroupID, GroupName: s.GroupName}
+		for i, s := range m.SourceGroups {
+			item.SourceGroups[i] = sourceGroup{GroupID: s.GroupID, GroupName: s.GroupName}
 		}
 
 		items = append(items, item)

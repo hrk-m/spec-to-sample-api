@@ -296,9 +296,9 @@ FROM user_summary us`
 			return nil, 0, domain.ErrInternalServerError
 		}
 
-		m.Sources = make([]domain.GroupMemberSource, len(sgRows))
+		m.SourceGroups = make([]domain.SourceGroup, len(sgRows))
 		for i, sg := range sgRows {
-			m.Sources[i] = domain.GroupMemberSource{GroupID: sg.GroupID, GroupName: sg.GroupName}
+			m.SourceGroups[i] = domain.SourceGroup{GroupID: sg.GroupID, GroupName: sg.GroupName}
 		}
 
 		members = append(members, m)

@@ -115,10 +115,10 @@ func TestService_ListGroupMembers_OK(t *testing.T) {
 	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 2}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
-	src1 := []domain.GroupMemberSource{{GroupID: 1, GroupName: "dev-team"}}
+	src1 := []domain.SourceGroup{{GroupID: 1, GroupName: "dev-team"}}
 	members := []domain.GroupMember{
-		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada", Sources: src1},
-		{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Suzuki", Sources: src1},
+		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada", SourceGroups: src1},
+		{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Suzuki", SourceGroups: src1},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
 		Return(members, 2, nil)
@@ -139,9 +139,9 @@ func TestService_ListGroupMembers_WithSearch(t *testing.T) {
 	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 2}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
-	src := []domain.GroupMemberSource{{GroupID: 1, GroupName: "dev-team"}}
+	src := []domain.SourceGroup{{GroupID: 1, GroupName: "dev-team"}}
 	members := []domain.GroupMember{
-		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada", Sources: src},
+		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada", SourceGroups: src},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "Yamada").
 		Return(members, 2, nil)
@@ -249,9 +249,9 @@ func TestService_ListGroupMembers_MultiLevel(t *testing.T) {
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	members := []domain.GroupMember{
-		{ID: 1, UUID: "uuid-1", FirstName: "Taro", LastName: "Yamada", Sources: []domain.GroupMemberSource{{GroupID: 1, GroupName: "Engineering"}}},
-		{ID: 2, UUID: "uuid-2", FirstName: "Hanako", LastName: "Suzuki", Sources: []domain.GroupMemberSource{{GroupID: 2, GroupName: "Frontend Team"}}},
-		{ID: 3, UUID: "uuid-3", FirstName: "Jiro", LastName: "Tanaka", Sources: []domain.GroupMemberSource{{GroupID: 3, GroupName: "Backend Team"}}},
+		{ID: 1, UUID: "uuid-1", FirstName: "Taro", LastName: "Yamada", SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: "Engineering"}}},
+		{ID: 2, UUID: "uuid-2", FirstName: "Hanako", LastName: "Suzuki", SourceGroups: []domain.SourceGroup{{GroupID: 2, GroupName: "Frontend Team"}}},
+		{ID: 3, UUID: "uuid-3", FirstName: "Jiro", LastName: "Tanaka", SourceGroups: []domain.SourceGroup{{GroupID: 3, GroupName: "Backend Team"}}},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
 		Return(members, 3, nil)
@@ -261,8 +261,8 @@ func TestService_ListGroupMembers_MultiLevel(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, result, 3)
 	assert.Equal(t, 3, total)
-	assert.Equal(t, uint64(1), result[0].Sources[0].GroupID)
-	assert.Equal(t, uint64(2), result[1].Sources[0].GroupID)
+	assert.Equal(t, uint64(1), result[0].SourceGroups[0].GroupID)
+	assert.Equal(t, uint64(2), result[1].SourceGroups[0].GroupID)
 	repo.AssertExpectations(t)
 }
 
@@ -276,9 +276,9 @@ func TestService_ListGroupMembers_DuplicateUserParentPriority(t *testing.T) {
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	// User 5 belongs to both parent(1) and child(2); both source groups are returned.
-	dupSources := []domain.GroupMemberSource{{GroupID: 1, GroupName: "Engineering"}, {GroupID: 2, GroupName: "SubGroup"}}
+	dupSources := []domain.SourceGroup{{GroupID: 1, GroupName: "Engineering"}, {GroupID: 2, GroupName: "SubGroup"}}
 	members := []domain.GroupMember{
-		{ID: 5, UUID: "uuid-5", FirstName: "Duplicate", LastName: "User", Sources: dupSources},
+		{ID: 5, UUID: "uuid-5", FirstName: "Duplicate", LastName: "User", SourceGroups: dupSources},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
 		Return(members, 1, nil)
@@ -288,7 +288,7 @@ func TestService_ListGroupMembers_DuplicateUserParentPriority(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, result, 1)
 	assert.Equal(t, 1, total)
-	assert.Equal(t, uint64(1), result[0].Sources[0].GroupID)
+	assert.Equal(t, uint64(1), result[0].SourceGroups[0].GroupID)
 	repo.AssertExpectations(t)
 }
 
@@ -303,7 +303,7 @@ func TestService_ListGroupMembers_ShallowAncestorSource(t *testing.T) {
 
 	// User only in grandchild(3); source is child(2) which is the shallowest ancestor's root_child_id.
 	members := []domain.GroupMember{
-		{ID: 7, UUID: "uuid-7", FirstName: "Deep", LastName: "Member", Sources: []domain.GroupMemberSource{{GroupID: 2, GroupName: "Child Group"}}},
+		{ID: 7, UUID: "uuid-7", FirstName: "Deep", LastName: "Member", SourceGroups: []domain.SourceGroup{{GroupID: 2, GroupName: "Child Group"}}},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
 		Return(members, 1, nil)
@@ -313,8 +313,8 @@ func TestService_ListGroupMembers_ShallowAncestorSource(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, result, 1)
 	assert.Equal(t, 1, total)
-	assert.Equal(t, uint64(2), result[0].Sources[0].GroupID)
-	assert.Equal(t, "Child Group", result[0].Sources[0].GroupName)
+	assert.Equal(t, uint64(2), result[0].SourceGroups[0].GroupID)
+	assert.Equal(t, "Child Group", result[0].SourceGroups[0].GroupName)
 	repo.AssertExpectations(t)
 }
 
@@ -328,7 +328,7 @@ func TestService_ListGroupMembers_QFilter(t *testing.T) {
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	members := []domain.GroupMember{
-		{ID: 2, UUID: "uuid-2", FirstName: "Hanako", LastName: "Sato", Sources: []domain.GroupMemberSource{{GroupID: 1, GroupName: "Engineering"}}},
+		{ID: 2, UUID: "uuid-2", FirstName: "Hanako", LastName: "Sato", SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: "Engineering"}}},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "Sato").
 		Return(members, 1, nil)
@@ -352,8 +352,8 @@ func TestService_ListGroupMembers_NoDescendants(t *testing.T) {
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	members := []domain.GroupMember{
-		{ID: 1, UUID: "uuid-1", FirstName: "A", LastName: "User", Sources: []domain.GroupMemberSource{{GroupID: 1, GroupName: "Solo"}}},
-		{ID: 2, UUID: "uuid-2", FirstName: "B", LastName: "User", Sources: []domain.GroupMemberSource{{GroupID: 1, GroupName: "Solo"}}},
+		{ID: 1, UUID: "uuid-1", FirstName: "A", LastName: "User", SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: "Solo"}}},
+		{ID: 2, UUID: "uuid-2", FirstName: "B", LastName: "User", SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: "Solo"}}},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
 		Return(members, 2, nil)
@@ -364,7 +364,7 @@ func TestService_ListGroupMembers_NoDescendants(t *testing.T) {
 	assert.Len(t, result, 2)
 	assert.Equal(t, 2, total)
 	for _, m := range result {
-		assert.Equal(t, uint64(1), m.Sources[0].GroupID)
+		assert.Equal(t, uint64(1), m.SourceGroups[0].GroupID)
 	}
 	repo.AssertExpectations(t)
 }

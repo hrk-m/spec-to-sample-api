@@ -222,11 +222,11 @@ func TestGroupHandler_ListGroupMembers_OK(t *testing.T) {
 	c, rec := newGroupMemberContext(t, "/api/v1/groups/1/members?limit=500&offset=0", "1")
 
 	svc := new(mocks.MockGroupService)
-	engSrc := []domain.GroupMemberSource{{GroupID: 1, GroupName: "Engineering"}}
-	feSrc := []domain.GroupMemberSource{{GroupID: 2, GroupName: "Frontend Team"}}
+	engSrc := []domain.SourceGroup{{GroupID: 1, GroupName: "Engineering"}}
+	feSrc := []domain.SourceGroup{{GroupID: 2, GroupName: "Frontend Team"}}
 	members := []domain.GroupMember{
-		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada", Sources: engSrc},
-		{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Sato", Sources: feSrc},
+		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada", SourceGroups: engSrc},
+		{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Sato", SourceGroups: feSrc},
 	}
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
 		Return(members, 2, nil)
@@ -268,7 +268,7 @@ func TestGroupHandler_ListGroupMembers_DefaultParams(t *testing.T) {
 
 	svc := new(mocks.MockGroupService)
 	members := []domain.GroupMember{
-		{ID: 1, UUID: "uuid-1", FirstName: "A", LastName: "B", Sources: []domain.GroupMemberSource{{GroupID: 1, GroupName: "Solo"}}},
+		{ID: 1, UUID: "uuid-1", FirstName: "A", LastName: "B", SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: "Solo"}}},
 	}
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
 		Return(members, 1, nil)
@@ -298,9 +298,9 @@ func TestGroupHandler_ListGroupMembers_DuplicateUserParentPriority(t *testing.T)
 	c, rec := newGroupMemberContext(t, "/api/v1/groups/1/members", "1")
 
 	svc := new(mocks.MockGroupService)
-	dupSrc := []domain.GroupMemberSource{{GroupID: 1, GroupName: "Engineering"}, {GroupID: 2, GroupName: "SubGroup"}}
+	dupSrc := []domain.SourceGroup{{GroupID: 1, GroupName: "Engineering"}, {GroupID: 2, GroupName: "SubGroup"}}
 	members := []domain.GroupMember{
-		{ID: 5, UUID: "uuid-5", FirstName: "Dup", LastName: "User", Sources: dupSrc},
+		{ID: 5, UUID: "uuid-5", FirstName: "Dup", LastName: "User", SourceGroups: dupSrc},
 	}
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
 		Return(members, 1, nil)
@@ -334,9 +334,9 @@ func TestGroupHandler_ListGroupMembers_WithSearch(t *testing.T) {
 	c, rec := newGroupMemberContext(t, "/api/v1/groups/1/members?q=Yamada", "1")
 
 	svc := new(mocks.MockGroupService)
-	src := []domain.GroupMemberSource{{GroupID: 1, GroupName: "Engineering"}}
+	src := []domain.SourceGroup{{GroupID: 1, GroupName: "Engineering"}}
 	members := []domain.GroupMember{
-		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada", Sources: src},
+		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada", SourceGroups: src},
 	}
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "Yamada").
 		Return(members, 1, nil)
@@ -538,7 +538,7 @@ func TestGroupHandler_ListGroupMembers_SourceFieldsPresent(t *testing.T) {
 
 	svc := new(mocks.MockGroupService)
 	members := []domain.GroupMember{
-		{ID: 1, UUID: "uuid-1", FirstName: "A", LastName: "B", Sources: []domain.GroupMemberSource{{GroupID: 10, GroupName: "Engineering"}}},
+		{ID: 1, UUID: "uuid-1", FirstName: "A", LastName: "B", SourceGroups: []domain.SourceGroup{{GroupID: 10, GroupName: "Engineering"}}},
 	}
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
 		Return(members, 1, nil)
