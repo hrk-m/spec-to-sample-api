@@ -68,10 +68,10 @@
 
 ### グループメンバー一覧取得
 
-- `GET /api/v1/groups/:id/members` — 指定グループのメンバー一覧を返すエンドポイント
+- `GET /api/v1/groups/:id/members` — 指定グループ（自グループ＋全子孫グループ）のメンバー一覧を返すエンドポイント
   - パスパラメータ: `id`（グループ ID、1 以上の整数）
   - 任意パラメータ: `limit`（取得件数、1-500、デフォルト 500）、`offset`（オフセット、0 以上、デフォルト 0）、`q`（名前検索）
-  - レスポンス: メンバー一覧（members）+ 総件数（total）
+  - レスポンス: メンバー一覧（members）+ 総件数（total）。各 member オブジェクトは `id, uuid, first_name, last_name` に加え `source_groups`（`[{group_id, group_name}]`）を含む。`source_groups` はそのユーザーが所属する直属の子グループ単位で集約した所属元グループ情報
   - エラー: 不正な ID/パラメータ → 400、グループ未存在 → 404
 
 ### グループ未所属ユーザー一覧取得
@@ -122,7 +122,7 @@
   - バリデーション: `child_group_id` は 1 以上の整数であること。親グループと子グループが同一でないこと。循環参照が発生しないこと。コンポーネント内グループ数が 10 以下であること。最大パス長（ノード数）が 5 以下であること
   - 内部動作: `group_relations` テーブルに `(parent_group_id, child_group_id)` を INSERT する。WITH RECURSIVE CTE で祖先・子孫・コンポーネントサイズ・最大深度を検証してから INSERT する
   - レスポンス: 作成された関係情報（parent_group_id, child_group_id）(201)
-  - エラー: 不正な ID/パラメータ（循環・サイズ超過・深度超過・自己参照含む）→ 400、親グループ未存在 → 404、子グループ未存在 → 404、既に関係が存在 → 400（ErrConflict を ErrBadParamInput に変換）
+  - エラー: 不正な ID/パラメータ（循環・サイズ超過・深度超過・自己参照含む）→ 400、親グループ未存在 → 404、子グループ未存在 → 404、既に関係が存在 → 409
 
 ### サブグループ削除
 
@@ -139,7 +139,7 @@
 - **User**: id, uuid, first_name, last_name
 - **GroupRelation**: parent_group_id, child_group_id
 
-> **補足**: `User` はメンバー一覧（`GET /api/v1/groups/:id/members`）、未所属ユーザー一覧（`GET /api/v1/groups/:id/non-members`）、グループメンバー追加レスポンス（`POST /api/v1/groups/:id/members`）、認証レスポンス（`GET /api/v1/me`）のすべてで使用する。`GroupMember` という別型は存在せず、`domain.User` で統一している。`uuid` フィールドは `users` テーブルの `uuid` カラム（VARCHAR(36), UNIQUE）に対応し、`db/migrate/20260415120000_add_uuid_to_users.up.sql` で追加された。
+> **補足**: `domain.User`（`id, uuid, first_name, last_name`）は未所属ユーザー一覧（`GET /api/v1/groups/:id/non-members`）、グループメンバー追加レスポンス（`POST /api/v1/groups/:id/members`）、認証レスポンス（`GET /api/v1/me`）で使用する。グループメンバー一覧（`GET /api/v1/groups/:id/members`）では `domain.GroupMember` を使用する。`GroupMember` は `domain.User` のフィールドに加え `Sources`（`[]domain.GroupMemberSource`）を持ち、所属元グループ情報（`GroupID, GroupName`）を含む。HTTP レスポンスでは `source_groups` キーで JSON 出力される。`uuid` フィールドは `users` テーブルの `uuid` カラム（VARCHAR(36), UNIQUE）に対応し、`db/migrate/20260415120000_add_uuid_to_users.up.sql` で追加された。
 
 > **補足**: `GroupRelation` は `domain/group_relation.go` に定義されており、`POST /api/v1/groups/:id/subgroups` のレスポンスとして使用される。`group_relations` テーブルは `db/migrate/20260425000000_create_group_relations.up.sql` で作成された（UNIQUE KEY: `(parent_group_id, child_group_id)`、外部キー: `groups(id) ON DELETE CASCADE`）。
 

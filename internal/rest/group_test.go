@@ -204,18 +204,71 @@ func TestGroupHandler_GetByID_InternalError(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestGroupHandler_ListGroupMembers_OK(t *testing.T) {
+func newGroupMemberContext(t *testing.T, url, paramVal string) (echo.Context, *httptest.ResponseRecorder) {
+	t.Helper()
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/1/members?limit=500&offset=0", nil)
+	req := httptest.NewRequest(http.MethodGet, url, nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetPath("/api/v1/groups/:id/members")
 	c.SetParamNames("id")
-	c.SetParamValues("1")
+	c.SetParamValues(paramVal)
+	c.Set("authUser", domain.User{ID: 1, UUID: "auth-uuid"})
+	return c, rec
+}
+
+// #1: 正常系 — 親直属 + 子孫サブグループメンバーを統合した一覧を取得する。
+func TestGroupHandler_ListGroupMembers_OK(t *testing.T) {
+	c, rec := newGroupMemberContext(t, "/api/v1/groups/1/members?limit=500&offset=0", "1")
 
 	svc := new(mocks.MockGroupService)
-	members := []domain.User{
-		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada"},
+	engSrc := []domain.GroupMemberSource{{GroupID: 1, GroupName: "Engineering"}}
+	feSrc := []domain.GroupMemberSource{{GroupID: 2, GroupName: "Frontend Team"}}
+	members := []domain.GroupMember{
+		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada", Sources: engSrc},
+		{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Sato", Sources: feSrc},
+	}
+	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
+		Return(members, 2, nil)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.ListGroupMembers(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var result struct {
+		Members []struct {
+			ID           uint64 `json:"id"`
+			UUID         string `json:"uuid"`
+			FirstName    string `json:"first_name"`
+			LastName     string `json:"last_name"`
+			SourceGroups []struct {
+				GroupID   uint64 `json:"group_id"`
+				GroupName string `json:"group_name"`
+			} `json:"source_groups"`
+		} `json:"members"`
+		Total int `json:"total"`
+	}
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Len(t, result.Members, 2)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Members[0].UUID)
+	assert.Len(t, result.Members[0].SourceGroups, 1)
+	assert.Equal(t, uint64(1), result.Members[0].SourceGroups[0].GroupID)
+	assert.Equal(t, "Engineering", result.Members[0].SourceGroups[0].GroupName)
+	assert.Len(t, result.Members[1].SourceGroups, 1)
+	assert.Equal(t, uint64(2), result.Members[1].SourceGroups[0].GroupID)
+	assert.Equal(t, 2, result.Total)
+	svc.AssertExpectations(t)
+}
+
+// #2: 正常系 — サブグループなしのとき親直属のみが返る。
+func TestGroupHandler_ListGroupMembers_DefaultParams(t *testing.T) {
+	c, rec := newGroupMemberContext(t, "/api/v1/groups/1/members", "1")
+
+	svc := new(mocks.MockGroupService)
+	members := []domain.GroupMember{
+		{ID: 1, UUID: "uuid-1", FirstName: "A", LastName: "B", Sources: []domain.GroupMemberSource{{GroupID: 1, GroupName: "Solo"}}},
 	}
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
 		Return(members, 1, nil)
@@ -227,58 +280,83 @@ func TestGroupHandler_ListGroupMembers_OK(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 
 	var result struct {
-		Members []domain.User `json:"members"`
-		Total   int           `json:"total"`
+		Members []struct {
+			SourceGroups []struct {
+				GroupID uint64 `json:"group_id"`
+			} `json:"source_groups"`
+		} `json:"members"`
 	}
 	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
 	assert.Len(t, result.Members, 1)
-	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Members[0].UUID)
+	assert.Len(t, result.Members[0].SourceGroups, 1)
+	assert.Equal(t, uint64(1), result.Members[0].SourceGroups[0].GroupID)
+	svc.AssertExpectations(t)
+}
+
+// #3: 正常系 — 親と子孫に重複所属するユーザーは全所属元が source_groups 配列に含まれる。
+func TestGroupHandler_ListGroupMembers_DuplicateUserParentPriority(t *testing.T) {
+	c, rec := newGroupMemberContext(t, "/api/v1/groups/1/members", "1")
+
+	svc := new(mocks.MockGroupService)
+	dupSrc := []domain.GroupMemberSource{{GroupID: 1, GroupName: "Engineering"}, {GroupID: 2, GroupName: "SubGroup"}}
+	members := []domain.GroupMember{
+		{ID: 5, UUID: "uuid-5", FirstName: "Dup", LastName: "User", Sources: dupSrc},
+	}
+	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
+		Return(members, 1, nil)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.ListGroupMembers(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var result struct {
+		Members []struct {
+			ID           uint64 `json:"id"`
+			SourceGroups []struct {
+				GroupID uint64 `json:"group_id"`
+			} `json:"source_groups"`
+		} `json:"members"`
+		Total int `json:"total"`
+	}
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Len(t, result.Members, 1)
+	assert.Equal(t, uint64(5), result.Members[0].ID)
+	assert.Len(t, result.Members[0].SourceGroups, 2)
+	assert.Equal(t, uint64(1), result.Members[0].SourceGroups[0].GroupID)
 	assert.Equal(t, 1, result.Total)
 	svc.AssertExpectations(t)
 }
 
-func TestGroupHandler_ListGroupMembers_DefaultParams(t *testing.T) {
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/1/members", nil)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	c.SetPath("/api/v1/groups/:id/members")
-	c.SetParamNames("id")
-	c.SetParamValues("1")
-
-	svc := new(mocks.MockGroupService)
-	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
-		Return([]domain.User{}, 0, nil)
-
-	h := &rest.GroupHandler{Service: svc}
-	err := h.ListGroupMembers(c)
-
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, rec.Code)
-	svc.AssertExpectations(t)
-}
-
+// #4: 正常系 — q フィルターが親 + 子孫全体に適用される。
 func TestGroupHandler_ListGroupMembers_WithSearch(t *testing.T) {
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/1/members?q=Yamada", nil)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	c.SetPath("/api/v1/groups/:id/members")
-	c.SetParamNames("id")
-	c.SetParamValues("1")
+	c, rec := newGroupMemberContext(t, "/api/v1/groups/1/members?q=Yamada", "1")
 
 	svc := new(mocks.MockGroupService)
-	members := []domain.User{
-		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada"},
+	src := []domain.GroupMemberSource{{GroupID: 1, GroupName: "Engineering"}}
+	members := []domain.GroupMember{
+		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada", Sources: src},
 	}
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "Yamada").
-		Return(members, 2, nil)
+		Return(members, 1, nil)
 
 	h := &rest.GroupHandler{Service: svc}
 	err := h.ListGroupMembers(c)
 
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var result struct {
+		Members []struct {
+			LastName string `json:"last_name"`
+		} `json:"members"`
+		Total int `json:"total"`
+	}
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Len(t, result.Members, 1)
+	assert.Equal(t, "Yamada", result.Members[0].LastName)
+	assert.Equal(t, 1, result.Total)
 	svc.AssertExpectations(t)
 }
 
@@ -290,6 +368,26 @@ func TestGroupHandler_ListGroupMembers_InvalidID(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id/members")
 	c.SetParamNames("id")
 	c.SetParamValues("abc")
+
+	h := &rest.GroupHandler{Service: new(mocks.MockGroupService)}
+	err := h.ListGroupMembers(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "given param is not valid", result["message"])
+}
+
+func TestGroupHandler_ListGroupMembers_ZeroID(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/0/members", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/members")
+	c.SetParamNames("id")
+	c.SetParamValues("0")
 
 	h := &rest.GroupHandler{Service: new(mocks.MockGroupService)}
 	err := h.ListGroupMembers(c)
@@ -362,18 +460,13 @@ func TestGroupHandler_ListGroupMembers_InvalidOffset(t *testing.T) {
 	assert.Equal(t, "given param is not valid", result["message"])
 }
 
+// #11: 異常系 — 存在しないグループ ID → 404。
 func TestGroupHandler_ListGroupMembers_GroupNotFound(t *testing.T) {
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/9999/members", nil)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	c.SetPath("/api/v1/groups/:id/members")
-	c.SetParamNames("id")
-	c.SetParamValues("9999")
+	c, rec := newGroupMemberContext(t, "/api/v1/groups/9999/members", "9999")
 
 	svc := new(mocks.MockGroupService)
 	svc.On("ListGroupMembers", mock.Anything, uint64(9999), 500, 0, "").
-		Return([]domain.User(nil), 0, domain.ErrNotFound)
+		Return([]domain.GroupMember(nil), 0, domain.ErrNotFound)
 
 	h := &rest.GroupHandler{Service: svc}
 	err := h.ListGroupMembers(c)
@@ -387,18 +480,13 @@ func TestGroupHandler_ListGroupMembers_GroupNotFound(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
+// #13: 例外処理 — service が ErrInternalServerError を返す → 500。
 func TestGroupHandler_ListGroupMembers_InternalError(t *testing.T) {
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/1/members", nil)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	c.SetPath("/api/v1/groups/:id/members")
-	c.SetParamNames("id")
-	c.SetParamValues("1")
+	c, rec := newGroupMemberContext(t, "/api/v1/groups/1/members", "1")
 
 	svc := new(mocks.MockGroupService)
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
-		Return([]domain.User(nil), 0, domain.ErrInternalServerError)
+		Return([]domain.GroupMember(nil), 0, domain.ErrInternalServerError)
 
 	h := &rest.GroupHandler{Service: svc}
 	err := h.ListGroupMembers(c)
@@ -412,18 +500,13 @@ func TestGroupHandler_ListGroupMembers_InternalError(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
+// #5: 正常系 — source_group_id / source_group_name フィールドが JSON に含まれる（limit=500 境界値）。
 func TestGroupHandler_ListGroupMembers_LimitUpperBound(t *testing.T) {
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/1/members?limit=500", nil)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	c.SetPath("/api/v1/groups/:id/members")
-	c.SetParamNames("id")
-	c.SetParamValues("1")
+	c, rec := newGroupMemberContext(t, "/api/v1/groups/1/members?limit=500", "1")
 
 	svc := new(mocks.MockGroupService)
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
-		Return([]domain.User{}, 0, nil)
+		Return([]domain.GroupMember{}, 0, nil)
 
 	h := &rest.GroupHandler{Service: svc}
 	err := h.ListGroupMembers(c)
@@ -433,18 +516,13 @@ func TestGroupHandler_ListGroupMembers_LimitUpperBound(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
+// offset=0 の正常系。
 func TestGroupHandler_ListGroupMembers_OffsetZero(t *testing.T) {
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/1/members?offset=0", nil)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	c.SetPath("/api/v1/groups/:id/members")
-	c.SetParamNames("id")
-	c.SetParamValues("1")
+	c, rec := newGroupMemberContext(t, "/api/v1/groups/1/members?offset=0", "1")
 
 	svc := new(mocks.MockGroupService)
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
-		Return([]domain.User{}, 0, nil)
+		Return([]domain.GroupMember{}, 0, nil)
 
 	h := &rest.GroupHandler{Service: svc}
 	err := h.ListGroupMembers(c)
@@ -453,6 +531,40 @@ func TestGroupHandler_ListGroupMembers_OffsetZero(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	svc.AssertExpectations(t)
 }
+
+// #6: 正常系 — source_groups フィールドが JSON に含まれる。
+func TestGroupHandler_ListGroupMembers_SourceFieldsPresent(t *testing.T) {
+	c, rec := newGroupMemberContext(t, "/api/v1/groups/1/members", "1")
+
+	svc := new(mocks.MockGroupService)
+	members := []domain.GroupMember{
+		{ID: 1, UUID: "uuid-1", FirstName: "A", LastName: "B", Sources: []domain.GroupMemberSource{{GroupID: 10, GroupName: "Engineering"}}},
+	}
+	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
+		Return(members, 1, nil)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.ListGroupMembers(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var result struct {
+		Members []struct {
+			SourceGroups []struct {
+				GroupID   uint64 `json:"group_id"`
+				GroupName string `json:"group_name"`
+			} `json:"source_groups"`
+		} `json:"members"`
+	}
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Len(t, result.Members, 1)
+	assert.Len(t, result.Members[0].SourceGroups, 1)
+	assert.Equal(t, uint64(10), result.Members[0].SourceGroups[0].GroupID)
+	assert.Equal(t, "Engineering", result.Members[0].SourceGroups[0].GroupName)
+	svc.AssertExpectations(t)
+}
+
 
 func TestGroupHandler_ListGroups_OK(t *testing.T) {
 	e := echo.New()
@@ -1915,7 +2027,7 @@ func TestGroupHandler_CreateSubGroup_ServiceConflict(t *testing.T) {
 
 	var result map[string]string
 	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
-	assert.Equal(t, "given param is not valid", result["message"])
+	assert.Equal(t, "your item already exist", result["message"])
 	svc.AssertExpectations(t)
 }
 

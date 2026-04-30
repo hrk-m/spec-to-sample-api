@@ -2,6 +2,7 @@
 package rest
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/hrk-m/spec-to-dev-workflow/sample-api/domain"
@@ -17,15 +18,16 @@ func getStatusCode(err error) int {
 	if err == nil {
 		return http.StatusOK
 	}
-	switch err {
-	case domain.ErrBadParamInput:
+
+	switch {
+	case errors.Is(err, domain.ErrBadParamInput):
 		return http.StatusBadRequest
-	case domain.ErrInternalServerError:
-		return http.StatusInternalServerError
-	case domain.ErrNotFound:
+	case errors.Is(err, domain.ErrNotFound):
 		return http.StatusNotFound
-	case domain.ErrConflict:
+	case errors.Is(err, domain.ErrConflict):
 		return http.StatusConflict
+	case errors.Is(err, domain.ErrInternalServerError):
+		return http.StatusInternalServerError
 	default:
 		return http.StatusInternalServerError
 	}

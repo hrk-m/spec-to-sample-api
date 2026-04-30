@@ -4,6 +4,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,6 +13,12 @@ import (
 
 	"github.com/hrk-m/spec-to-dev-workflow/sample-api/domain"
 )
+
+// sourceGroupRow is used internally to unmarshal JSON_ARRAYAGG results from ListGroupMembers.
+type sourceGroupRow struct {
+	GroupID   uint64 `json:"group_id"`
+	GroupName string `json:"group_name"`
+}
 
 // GroupRepository is a MySQL implementation of group.GroupRepository.
 type GroupRepository struct {
@@ -208,53 +215,90 @@ func (r *GroupRepository) GetByID(ctx context.Context, id uint64) (domain.Group,
 	return g, nil
 }
 
-// ListGroupMembers returns paginated members for a group with optional name search.
-func (r *GroupRepository) ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.User, int, error) {
-	// Count members for the group with optional q filter.
-	countQuery := "SELECT COUNT(*) FROM group_members gm JOIN users u ON gm.user_id = u.id WHERE gm.group_id = ?"
-	countArgs := []interface{}{id}
+// ListGroupMembers returns paginated members for a group and all its descendants using WITH RECURSIVE.
+// Each user row includes a JSON array of all source groups (direct and via subgroups) they belong to.
+func (r *GroupRepository) ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.GroupMember, int, error) {
+	// Build the WITH RECURSIVE query.
+	// descendants: (group_id, depth, root_child_id) — self and all descendant groups.
+	//   root_child_id is the depth=1 direct subgroup of the queried group (or the queried group itself at depth=0).
+	// user_sources: per (user, root_child_id) pair, the minimum depth for ordering.
+	// user_summary: aggregate all source groups per user into a JSON array ordered by depth.
+	// Final SELECT: apply ORDER BY and LIMIT/OFFSET, get total via window function.
+	query := `WITH RECURSIVE descendants AS (
+    SELECT id AS group_id, 0 AS depth, id AS root_child_id
+    FROM ` + "`groups`" + `
+    WHERE id = ?
+    UNION ALL
+    SELECT gr.child_group_id, d.depth + 1,
+           CASE WHEN d.depth = 0 THEN gr.child_group_id ELSE d.root_child_id END AS root_child_id
+    FROM group_relations gr
+    INNER JOIN descendants d ON gr.parent_group_id = d.group_id
+),
+user_sources AS (
+    SELECT
+        u.id AS user_id, u.uuid, u.first_name, u.last_name, u.search_key,
+        d.root_child_id AS source_group_id,
+        MIN(d.depth) AS source_depth
+    FROM descendants d
+    INNER JOIN group_members gm ON gm.group_id = d.group_id
+    INNER JOIN users u ON u.id = gm.user_id
+    GROUP BY u.id, u.uuid, u.first_name, u.last_name, u.search_key, d.root_child_id
+),
+user_summary AS (
+    SELECT
+        us.user_id, us.uuid, us.first_name, us.last_name, us.search_key,
+        MIN(us.source_depth) AS min_depth,
+        JSON_ARRAYAGG(
+            JSON_OBJECT('group_id', us.source_group_id, 'group_name', g.name)
+        ) AS source_groups
+    FROM user_sources us
+    INNER JOIN ` + "`groups`" + ` g ON g.id = us.source_group_id
+    GROUP BY us.user_id, us.uuid, us.first_name, us.last_name, us.search_key
+)`
 
-	if q != "" {
-		countQuery += " AND u.search_key LIKE ?" //nolint:goconst
-		countArgs = append(countArgs, "%"+q+"%")
-	}
-
-	var total int
-
-	if err := r.db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-		return nil, 0, domain.ErrInternalServerError
-	}
-
-	if total == 0 {
-		return []domain.User{}, 0, nil
-	}
-
-	// Fetch paginated members with optional q filter.
-	query := "SELECT u.id, u.uuid, u.first_name, u.last_name" +
-		" FROM group_members gm JOIN users u ON gm.user_id = u.id" +
-		" WHERE gm.group_id = ?"
 	args := []interface{}{id}
 
+	query += `
+SELECT
+    us.user_id, us.uuid, us.first_name, us.last_name, us.search_key,
+    us.source_groups,
+    COUNT(*) OVER() AS total
+FROM user_summary us`
+
 	if q != "" {
-		query += " AND u.search_key LIKE ?" //nolint:goconst
+		query += " WHERE us.search_key LIKE ?"
 		args = append(args, "%"+q+"%")
 	}
 
-	query += " ORDER BY u.id LIMIT ? OFFSET ?"
+	query += " ORDER BY us.min_depth ASC, us.user_id ASC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	rows, err := r.db.QueryContext(ctx, query, args...) //nolint:gosec
 	if err != nil {
 		return nil, 0, domain.ErrInternalServerError
 	}
 	defer func() { _ = rows.Close() }()
 
-	var members []domain.User
+	var members []domain.GroupMember
+	var total int
 
 	for rows.Next() {
-		var m domain.User
-		if scanErr := rows.Scan(&m.ID, &m.UUID, &m.FirstName, &m.LastName); scanErr != nil {
+		var m domain.GroupMember
+		var searchKey string
+		var sourceGroupsJSON []byte
+
+		if scanErr := rows.Scan(&m.ID, &m.UUID, &m.FirstName, &m.LastName, &searchKey, &sourceGroupsJSON, &total); scanErr != nil {
 			return nil, 0, domain.ErrInternalServerError
+		}
+
+		var sgRows []sourceGroupRow
+		if unmarshalErr := json.Unmarshal(sourceGroupsJSON, &sgRows); unmarshalErr != nil {
+			return nil, 0, domain.ErrInternalServerError
+		}
+
+		m.Sources = make([]domain.GroupMemberSource, len(sgRows))
+		for i, sg := range sgRows {
+			m.Sources[i] = domain.GroupMemberSource{GroupID: sg.GroupID, GroupName: sg.GroupName}
 		}
 
 		members = append(members, m)
@@ -265,7 +309,7 @@ func (r *GroupRepository) ListGroupMembers(ctx context.Context, id uint64, limit
 	}
 
 	if members == nil {
-		members = []domain.User{}
+		members = []domain.GroupMember{}
 	}
 
 	return members, total, nil

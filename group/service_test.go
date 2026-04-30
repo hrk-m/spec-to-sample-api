@@ -115,9 +115,10 @@ func TestService_ListGroupMembers_OK(t *testing.T) {
 	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 2}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
-	members := []domain.User{
-		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada"},
-		{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Suzuki"},
+	src1 := []domain.GroupMemberSource{{GroupID: 1, GroupName: "dev-team"}}
+	members := []domain.GroupMember{
+		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada", Sources: src1},
+		{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Suzuki", Sources: src1},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
 		Return(members, 2, nil)
@@ -138,8 +139,9 @@ func TestService_ListGroupMembers_WithSearch(t *testing.T) {
 	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 2}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
-	members := []domain.User{
-		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada"},
+	src := []domain.GroupMemberSource{{GroupID: 1, GroupName: "dev-team"}}
+	members := []domain.GroupMember{
+		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada", Sources: src},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "Yamada").
 		Return(members, 2, nil)
@@ -208,7 +210,7 @@ func TestService_ListGroupMembers_RepositoryError(t *testing.T) {
 	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 2}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
-		Return([]domain.User(nil), 0, domain.ErrInternalServerError)
+		Return([]domain.GroupMember(nil), 0, domain.ErrInternalServerError)
 
 	_, _, err := svc.ListGroupMembers(context.Background(), 1, 500, 0, "")
 
@@ -224,7 +226,7 @@ func TestService_ListGroupMembers_EmptyResult(t *testing.T) {
 	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 0}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
-		Return([]domain.User(nil), 0, nil)
+		Return([]domain.GroupMember(nil), 0, nil)
 
 	result, total, err := svc.ListGroupMembers(context.Background(), 1, 500, 0, "")
 
@@ -232,6 +234,203 @@ func TestService_ListGroupMembers_EmptyResult(t *testing.T) {
 	assert.Empty(t, result)
 	assert.NotNil(t, result)
 	assert.Equal(t, 0, total)
+	repo.AssertExpectations(t)
+}
+
+// --- ListGroupMembers PRD tests (#14-#23) ---
+
+// #14: 正常系 — 親 + 全子孫を再帰で集約した結果を返す（3 階層）。
+func TestService_ListGroupMembers_MultiLevel(t *testing.T) {
+	repo := new(mocks.MockGroupRepository)
+	userRepo := new(mocks.MockUserRepository)
+	svc := group.NewService(repo, userRepo)
+
+	groupResp := domain.Group{ID: 1, Name: "Engineering", Description: "", MemberCount: 3}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
+
+	members := []domain.GroupMember{
+		{ID: 1, UUID: "uuid-1", FirstName: "Taro", LastName: "Yamada", Sources: []domain.GroupMemberSource{{GroupID: 1, GroupName: "Engineering"}}},
+		{ID: 2, UUID: "uuid-2", FirstName: "Hanako", LastName: "Suzuki", Sources: []domain.GroupMemberSource{{GroupID: 2, GroupName: "Frontend Team"}}},
+		{ID: 3, UUID: "uuid-3", FirstName: "Jiro", LastName: "Tanaka", Sources: []domain.GroupMemberSource{{GroupID: 3, GroupName: "Backend Team"}}},
+	}
+	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
+		Return(members, 3, nil)
+
+	result, total, err := svc.ListGroupMembers(context.Background(), 1, 500, 0, "")
+
+	assert.NoError(t, err)
+	assert.Len(t, result, 3)
+	assert.Equal(t, 3, total)
+	assert.Equal(t, uint64(1), result[0].Sources[0].GroupID)
+	assert.Equal(t, uint64(2), result[1].Sources[0].GroupID)
+	repo.AssertExpectations(t)
+}
+
+// #15: 正常系 — 親優先の重複排除が働く。
+func TestService_ListGroupMembers_DuplicateUserParentPriority(t *testing.T) {
+	repo := new(mocks.MockGroupRepository)
+	userRepo := new(mocks.MockUserRepository)
+	svc := group.NewService(repo, userRepo)
+
+	groupResp := domain.Group{ID: 1, Name: "Engineering", Description: "", MemberCount: 1}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
+
+	// User 5 belongs to both parent(1) and child(2); both source groups are returned.
+	dupSources := []domain.GroupMemberSource{{GroupID: 1, GroupName: "Engineering"}, {GroupID: 2, GroupName: "SubGroup"}}
+	members := []domain.GroupMember{
+		{ID: 5, UUID: "uuid-5", FirstName: "Duplicate", LastName: "User", Sources: dupSources},
+	}
+	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
+		Return(members, 1, nil)
+
+	result, total, err := svc.ListGroupMembers(context.Background(), 1, 500, 0, "")
+
+	assert.NoError(t, err)
+	assert.Len(t, result, 1)
+	assert.Equal(t, 1, total)
+	assert.Equal(t, uint64(1), result[0].Sources[0].GroupID)
+	repo.AssertExpectations(t)
+}
+
+// #16: 正常系 — 子孫由来は最浅祖先の group_id を source として採用。
+func TestService_ListGroupMembers_ShallowAncestorSource(t *testing.T) {
+	repo := new(mocks.MockGroupRepository)
+	userRepo := new(mocks.MockUserRepository)
+	svc := group.NewService(repo, userRepo)
+
+	groupResp := domain.Group{ID: 1, Name: "Root", Description: "", MemberCount: 1}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
+
+	// User only in grandchild(3); source is child(2) which is the shallowest ancestor's root_child_id.
+	members := []domain.GroupMember{
+		{ID: 7, UUID: "uuid-7", FirstName: "Deep", LastName: "Member", Sources: []domain.GroupMemberSource{{GroupID: 2, GroupName: "Child Group"}}},
+	}
+	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
+		Return(members, 1, nil)
+
+	result, total, err := svc.ListGroupMembers(context.Background(), 1, 500, 0, "")
+
+	assert.NoError(t, err)
+	assert.Len(t, result, 1)
+	assert.Equal(t, 1, total)
+	assert.Equal(t, uint64(2), result[0].Sources[0].GroupID)
+	assert.Equal(t, "Child Group", result[0].Sources[0].GroupName)
+	repo.AssertExpectations(t)
+}
+
+// #17: 正常系 — q フィルター適用。
+func TestService_ListGroupMembers_QFilter(t *testing.T) {
+	repo := new(mocks.MockGroupRepository)
+	userRepo := new(mocks.MockUserRepository)
+	svc := group.NewService(repo, userRepo)
+
+	groupResp := domain.Group{ID: 1, Name: "Engineering", Description: "", MemberCount: 5}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
+
+	members := []domain.GroupMember{
+		{ID: 2, UUID: "uuid-2", FirstName: "Hanako", LastName: "Sato", Sources: []domain.GroupMemberSource{{GroupID: 1, GroupName: "Engineering"}}},
+	}
+	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "Sato").
+		Return(members, 1, nil)
+
+	result, total, err := svc.ListGroupMembers(context.Background(), 1, 500, 0, "Sato")
+
+	assert.NoError(t, err)
+	assert.Len(t, result, 1)
+	assert.Equal(t, 1, total)
+	assert.Equal(t, "Sato", result[0].LastName)
+	repo.AssertExpectations(t)
+}
+
+// #18: 正常系 — サブグループが空でも親直属メンバーが返る。
+func TestService_ListGroupMembers_NoDescendants(t *testing.T) {
+	repo := new(mocks.MockGroupRepository)
+	userRepo := new(mocks.MockUserRepository)
+	svc := group.NewService(repo, userRepo)
+
+	groupResp := domain.Group{ID: 1, Name: "Solo", Description: "", MemberCount: 2}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
+
+	members := []domain.GroupMember{
+		{ID: 1, UUID: "uuid-1", FirstName: "A", LastName: "User", Sources: []domain.GroupMemberSource{{GroupID: 1, GroupName: "Solo"}}},
+		{ID: 2, UUID: "uuid-2", FirstName: "B", LastName: "User", Sources: []domain.GroupMemberSource{{GroupID: 1, GroupName: "Solo"}}},
+	}
+	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
+		Return(members, 2, nil)
+
+	result, total, err := svc.ListGroupMembers(context.Background(), 1, 500, 0, "")
+
+	assert.NoError(t, err)
+	assert.Len(t, result, 2)
+	assert.Equal(t, 2, total)
+	for _, m := range result {
+		assert.Equal(t, uint64(1), m.Sources[0].GroupID)
+	}
+	repo.AssertExpectations(t)
+}
+
+// #19: 正常系 — メンバーが 0 人のグループ。
+func TestService_ListGroupMembers_ZeroMembers(t *testing.T) {
+	repo := new(mocks.MockGroupRepository)
+	userRepo := new(mocks.MockUserRepository)
+	svc := group.NewService(repo, userRepo)
+
+	groupResp := domain.Group{ID: 1, Name: "Empty", Description: "", MemberCount: 0}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
+	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
+		Return([]domain.GroupMember(nil), 0, nil)
+
+	result, total, err := svc.ListGroupMembers(context.Background(), 1, 500, 0, "")
+
+	assert.NoError(t, err)
+	assert.Empty(t, result)
+	assert.NotNil(t, result)
+	assert.Equal(t, 0, total)
+	repo.AssertExpectations(t)
+}
+
+// #21: 境界値 — id=0（最小境界外）。
+func TestService_ListGroupMembers_IDZero(t *testing.T) {
+	repo := new(mocks.MockGroupRepository)
+	userRepo := new(mocks.MockUserRepository)
+	svc := group.NewService(repo, userRepo)
+
+	_, _, err := svc.ListGroupMembers(context.Background(), 0, 500, 0, "")
+
+	assert.ErrorIs(t, err, domain.ErrBadParamInput)
+	repo.AssertNotCalled(t, "GetByID")
+	repo.AssertNotCalled(t, "ListGroupMembers")
+}
+
+// #22: 境界値 — limit=0 / limit=501。
+func TestService_ListGroupMembers_InvalidLimitBoundaries(t *testing.T) {
+	repo := new(mocks.MockGroupRepository)
+	userRepo := new(mocks.MockUserRepository)
+	svc := group.NewService(repo, userRepo)
+
+	_, _, errLow := svc.ListGroupMembers(context.Background(), 1, 0, 0, "")
+	assert.ErrorIs(t, errLow, domain.ErrBadParamInput)
+
+	_, _, errHigh := svc.ListGroupMembers(context.Background(), 1, 501, 0, "")
+	assert.ErrorIs(t, errHigh, domain.ErrBadParamInput)
+
+	repo.AssertNotCalled(t, "GetByID")
+}
+
+// #23: 例外処理 — repository が DB エラーを返す。
+func TestService_ListGroupMembers_DBError(t *testing.T) {
+	repo := new(mocks.MockGroupRepository)
+	userRepo := new(mocks.MockUserRepository)
+	svc := group.NewService(repo, userRepo)
+
+	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "", MemberCount: 0}
+	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
+	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "").
+		Return([]domain.GroupMember(nil), 0, domain.ErrInternalServerError)
+
+	_, _, err := svc.ListGroupMembers(context.Background(), 1, 500, 0, "")
+
+	assert.ErrorIs(t, err, domain.ErrInternalServerError)
 	repo.AssertExpectations(t)
 }
 
