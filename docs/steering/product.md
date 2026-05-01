@@ -139,9 +139,9 @@
 - **User**: id, uuid, first_name, last_name
 - **GroupRelation**: parent_group_id, child_group_id
 
-> **補足**: `domain.User`（`id, uuid, first_name, last_name`）は未所属ユーザー一覧（`GET /api/v1/groups/:id/non-members`）、グループメンバー追加レスポンス（`POST /api/v1/groups/:id/members`）、認証レスポンス（`GET /api/v1/me`）で使用する。グループメンバー一覧（`GET /api/v1/groups/:id/members`）では `domain.GroupMember` を使用する。`GroupMember` は `domain.User` のフィールドに加え `Sources`（`[]domain.GroupMemberSource`）を持ち、所属元グループ情報（`GroupID, GroupName`）を含む。HTTP レスポンスでは `source_groups` キーで JSON 出力される。`uuid` フィールドは `users` テーブルの `uuid` カラム（VARCHAR(36), UNIQUE）に対応し、`db/migrate/20260415120000_add_uuid_to_users.up.sql` で追加された。
+> **補足**: `domain.User`（`id, uuid, first_name, last_name`）は未所属ユーザー一覧（`GET /api/v1/groups/:id/non-members`）、グループメンバー追加レスポンス（`POST /api/v1/groups/:id/members`）、認証レスポンス（`GET /api/v1/me`）で使用する。グループメンバー一覧（`GET /api/v1/groups/:id/members`）では `domain.GroupMember` を使用する。`GroupMember` は `domain.User` のフィールドに加え `SourceGroups`（`[]domain.SourceGroup`）を持ち、所属元グループ情報（`GroupID, GroupName`）を含む。HTTP レスポンスでは `source_groups` キーで JSON 出力される。`uuid` フィールドは `users` テーブルの `uuid` カラム（VARCHAR(36), UNIQUE）に対応し、`db/migrate/20260415120000_add_uuid_to_users.up.sql` で追加された。
 
-> **補足**: `GroupRelation` は `domain/group_relation.go` に定義されており、`POST /api/v1/groups/:id/subgroups` のレスポンスとして使用される。`group_relations` テーブルは `db/migrate/20260425000000_create_group_relations.up.sql` で作成された（UNIQUE KEY: `(parent_group_id, child_group_id)`、外部キー: `groups(id) ON DELETE CASCADE`）。
+> **補足**: `GroupRelation` は `domain/group.go` に定義されており（`GroupMember`・`SourceGroup` と同ファイル）、`POST /api/v1/groups/:id/subgroups` のレスポンスとして使用される。`group_relations` テーブルは `db/migrate/20260425000000_create_group_relations.up.sql` で作成された（UNIQUE KEY: `(parent_group_id, child_group_id)`、外部キー: `groups(id) ON DELETE CASCADE`）。
 
 ## ユーザーとユースケース
 

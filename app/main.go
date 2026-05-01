@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -102,7 +103,9 @@ func main() {
 
 	apiGroup := e.Group("/api/v1")
 	aSvc := authSvc.NewService(userRepo)
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	apiGroup.Use(rest.AuthMiddleware(appEnv, aSvc))
+	apiGroup.Use(rest.AccessLogMiddleware(logger))
 	rest.NewAuthHandler(apiGroup)
 	rest.NewGroupHandler(apiGroup, gSvc)
 	rest.NewUserHandler(apiGroup, uSvc)

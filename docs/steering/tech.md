@@ -44,6 +44,14 @@ db/seed/                    →  Seed data (DML only)
 - `GET /api/v1/me` はコンテキストから `authUser` を取得して返す（`AuthMiddleware` が事前にセット）。`AuthHandler` は `AuthService` を保持せず、`internal/rest/auth.go` の `NewAuthHandler(g *echo.Group)` はルート登録のみを行う
 - `mysql.UserRepository` は `auth.UserRepository`（`GetByUUID`）も実装する
 
+### アクセスログ
+
+- `internal/rest/access_log.go` に `AccessLogMiddleware` を定義。`*slog.Logger` を受け取り、各リクエストを構造化 JSON でログ出力する
+  - ログフィールド: `endpoint`（メソッド + パス）、`login_user`（認証ユーザーの UUID）、`latency_s`（秒）、`status`（HTTP ステータスコード）、`header`（Authorization は `[REDACTED]` にマスク）
+  - レスポンスヘッダー `X-Login-User` に認証ユーザーの UUID をセットする
+  - `AuthMiddleware` の後に登録する必要がある（`authUser` がコンテキストにセット済みの状態でログを取るため）
+  - `app/main.go` で `slog.New(slog.NewJSONHandler(os.Stdout, nil))` で生成した logger を渡す
+
 ### エラーハンドリング
 
 - `domain/errors.go` にセンチネルエラーを集約
@@ -171,7 +179,7 @@ type UserRepository interface {
 
 `AddGroupMembers` はトランザクション内で `group_members` へ一括 INSERT する。INSERT 前に重複チェックを行い、既存メンバーが含まれる場合は `ErrConflict` を返す。成功後は追加したユーザーを `users` テーブルから SELECT して返す（`id, uuid, first_name, last_name` の全フィールドを SELECT する）。
 
-`ListGroupMembers` は `domain.GroupMember` を返す。`GroupMember` は `id, uuid, first_name, last_name` に加え、`Sources`（`[]domain.GroupMemberSource`）フィールドを持つ。`GroupMemberSource` は `GroupID` と `GroupName` を持ち、そのメンバーが所属する直属グループ（ルートの子グループ単位で集約）の情報を表す。MySQL の WITH RECURSIVE CTE で自グループと全子孫グループのメンバーを収集し、`JSON_ARRAYAGG` で各ユーザーの所属元グループをまとめて取得する。名前検索に使う `search_key` は repository 内部のローカル変数にスキャンし、`domain.GroupMember` には含まれない。`ListNonGroupMembers`・`AddGroupMembers` は `id, uuid, first_name, last_name` の全フィールドを SELECT する。`ListUsers` も同様に全フィールドを SELECT する。
+`ListGroupMembers` は `domain.GroupMember` を返す。`GroupMember` は `id, uuid, first_name, last_name` に加え、`SourceGroups`（`[]domain.SourceGroup`）フィールドを持つ。`SourceGroup` は `GroupID` と `GroupName` を持ち、そのメンバーが所属する直属グループ（ルートの子グループ単位で集約）の情報を表す。MySQL の WITH RECURSIVE CTE で自グループと全子孫グループのメンバーを収集し、`JSON_ARRAYAGG` で各ユーザーの所属元グループをまとめて取得する。名前検索に使う `search_key` は repository 内部のローカル変数にスキャンし、`domain.GroupMember` には含まれない。`ListNonGroupMembers`・`AddGroupMembers` は `id, uuid, first_name, last_name` の全フィールドを SELECT する。`ListUsers` も同様に全フィールドを SELECT する。
 
 `RemoveGroupMembers` は service 層でグループ存在確認を行い（`GetByID` 経由）、repository 層でトランザクション内に `DELETE FROM group_members WHERE group_id = ? AND user_id IN (?)` を実行する。`RowsAffected()` が `len(userIDs)` と一致しない場合（非メンバーが含まれる）は `ErrNotFound` を返してロールバックする。handler 層で `user_ids` の空チェック（`len == 0` → 400）を行う。成功時は `204 No Content` を返す。
 
