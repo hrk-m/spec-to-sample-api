@@ -10,7 +10,7 @@ sample-api/
 │   ├── migrate/             # DB schema migration (golang-migrate, .up.sql のみ)
 │   └── seed/                # 初期データ・開発用データ (DML のみ)
 ├── domain/                  # コアドメイン層（フレームワーク依存ゼロ）
-│   ├── *.go                 # ドメインモデル（struct + json タグ）。group.go, group_relation.go, user.go
+│   ├── *.go                 # ドメインモデル（struct + json タグ）。group.go（Group / GroupRelation / GroupMember / SourceGroup を含む）、user.go
 │   └── errors.go            # センチネルエラーの一元管理
 ├── auth/                    # 認証ユースケース層
 │   ├── service.go           # auth.Service（GetByUUID）+ UserRepository インターフェース
@@ -27,7 +27,7 @@ sample-api/
 ├── internal/
 │   ├── repository/
 │   │   └── mysql/           # Repository adapter（MySQL 実装）
-│   │       ├── {feature}.go          # group.go, group_relation.go, user.go
+│   │       ├── {feature}.go          # group.go, group_relation.go（GroupRelationRepository 実装）, user.go
 │   │       └── {feature}_test.go
 │   └── rest/                # Delivery 層（Echo ハンドラ）
 │       ├── {feature}.go       # ハンドラ + インターフェース定義 + ルート登録
@@ -35,6 +35,8 @@ sample-api/
 │       ├── errors.go          # エラー → HTTP ステータスコードのマッピング
 │       ├── params.go          # クエリ・パスパラメータの共通パース（parseLimit / parseOffset / parsePathID）
 │       ├── health.go          # DBPinger インターフェース定義 + /health ハンドラ登録
+│       ├── access_log.go        # AccessLogMiddleware（認証済みリクエストの構造化ログ出力）
+│       ├── access_log_test.go   # AccessLogMiddleware のテスト
 │       ├── auth.go              # AuthHandler + AuthMiddleware + AuthService インターフェース
 │       ├── auth_test.go         # AuthMiddleware・AuthHandler のテスト
 │       └── mocks/             # テスト用 mock（手動保守）
@@ -87,7 +89,9 @@ uSvc := user.NewService(userRepo)
 // /api/v1 以下のルートグループに AuthMiddleware を適用する
 apiGroup := e.Group("/api/v1")
 aSvc := auth.NewService(userRepo)  // userRepo を共有
+logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 apiGroup.Use(rest.AuthMiddleware(appEnv, aSvc))
+apiGroup.Use(rest.AccessLogMiddleware(logger))  // AuthMiddleware の後に登録（authUser が設定済みの状態でログ）
 rest.NewAuthHandler(apiGroup)  // AuthHandler は AuthService を保持しない
 rest.NewGroupHandler(apiGroup, gSvc)
 rest.NewUserHandler(apiGroup, uSvc)
