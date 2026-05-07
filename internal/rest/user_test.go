@@ -24,7 +24,7 @@ func TestUserHandler_ListUsers_OK(t *testing.T) {
 
 	svc := new(mocks.MockUserService)
 	users := []domain.User{
-		{ID: 1, UUID: "550e8400-e29b-41d4-a716-446655440001", FirstName: "Taro", LastName: "Yamada"},
+		{ID: 1, UUID: "550e8400-e29b-41d4-a716-446655440001", FirstName: testFirstNameTaro, LastName: "Yamada"},
 	}
 	svc.On("ListUsers", mock.Anything, "", 500, 0).Return(users, 15, nil)
 
@@ -235,7 +235,7 @@ func TestUserHandler_GetUser_OK(t *testing.T) {
 	c.SetParamValues("1")
 
 	svc := new(mocks.MockUserService)
-	user := &domain.User{ID: 1, UUID: "550e8400-e29b-41d4-a716-446655440001", FirstName: "Taro", LastName: "Yamada"}
+	user := &domain.User{ID: 1, UUID: "550e8400-e29b-41d4-a716-446655440001", FirstName: testFirstNameTaro, LastName: "Yamada"}
 	svc.On("GetUser", mock.Anything, uint64(1)).Return(user, nil)
 
 	h := &rest.UserHandler{Service: svc}
@@ -248,7 +248,7 @@ func TestUserHandler_GetUser_OK(t *testing.T) {
 	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
 	assert.Equal(t, uint64(1), result.ID)
 	assert.Equal(t, "550e8400-e29b-41d4-a716-446655440001", result.UUID)
-	assert.Equal(t, "Taro", result.FirstName)
+	assert.Equal(t, testFirstNameTaro, result.FirstName)
 	assert.Equal(t, "Yamada", result.LastName)
 	svc.AssertExpectations(t)
 }

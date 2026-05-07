@@ -15,7 +15,10 @@ import (
 	"github.com/hrk-m/spec-to-dev-workflow/sample-api/internal/rest/mocks"
 )
 
-const testUUID = "test-uuid-1234"
+const (
+	testUUID          = "test-uuid-1234"
+	testFirstNameTaro = "Taro"
+)
 
 func TestAuthMiddleware_Development_ValidUUID(t *testing.T) {
 	t.Setenv("DEV_USER_UUID", testUUID)
@@ -26,7 +29,7 @@ func TestAuthMiddleware_Development_ValidUUID(t *testing.T) {
 	c := e.NewContext(req, rec)
 
 	repo := new(mocks.MockAuthService)
-	user := domain.User{ID: 1, UUID: testUUID, FirstName: "Taro", LastName: "Yamada"}
+	user := domain.User{ID: 1, UUID: testUUID, FirstName: testFirstNameTaro, LastName: "Yamada"}
 	repo.On("GetByUUID", mock.Anything, testUUID).Return(user, nil)
 
 	mw := rest.AuthMiddleware("development", repo)
@@ -73,7 +76,7 @@ func TestAuthHandler_GetMe_OK(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	user := domain.User{ID: 1, UUID: testUUID, FirstName: "Taro", LastName: "Yamada"}
+	user := domain.User{ID: 1, UUID: testUUID, FirstName: testFirstNameTaro, LastName: "Yamada"}
 	c.Set("authUser", user)
 
 	h := &rest.AuthHandler{}

@@ -16,6 +16,11 @@ import (
 	"github.com/hrk-m/spec-to-dev-workflow/sample-api/internal/rest"
 )
 
+const (
+	accessLogStatusOK       = "ok"
+	accessLogMsgNotFound    = "not found"
+)
+
 func newTestLogger(buf *bytes.Buffer) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(buf, nil))
 }
@@ -29,12 +34,12 @@ func TestAccessLogMiddleware_AuthenticatedRequest(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	user := domain.User{ID: 1, UUID: "test-uuid-5678", FirstName: "Taro", LastName: "Yamada"}
+	user := domain.User{ID: 1, UUID: "test-uuid-5678", FirstName: testFirstNameTaro, LastName: "Yamada"}
 	c.Set("authUser", user)
 
 	mw := rest.AccessLogMiddleware(logger)
 	handler := mw(func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+		return c.JSON(http.StatusOK, map[string]string{"status": accessLogStatusOK})
 	})
 
 	err := handler(c)
@@ -60,7 +65,7 @@ func TestAccessLogMiddleware_NoAuthUser(t *testing.T) {
 
 	mw := rest.AccessLogMiddleware(logger)
 	handler := mw(func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+		return c.JSON(http.StatusOK, map[string]string{"status": accessLogStatusOK})
 	})
 
 	err := handler(c)
@@ -108,7 +113,7 @@ func TestAccessLogMiddleware_StatusCode(t *testing.T) {
 
 	mw := rest.AccessLogMiddleware(logger)
 	handler := mw(func(c echo.Context) error {
-		return c.JSON(http.StatusNotFound, rest.ResponseError{Message: "not found"})
+		return c.JSON(http.StatusNotFound, rest.ResponseError{Message: accessLogMsgNotFound})
 	})
 
 	err := handler(c)
@@ -131,7 +136,7 @@ func TestAccessLogMiddleware_5xxUsesErrorLevel(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	user := domain.User{ID: 1, UUID: "test-uuid-1234", FirstName: "Taro", LastName: "Yamada"}
+	user := domain.User{ID: 1, UUID: "test-uuid-1234", FirstName: testFirstNameTaro, LastName: "Yamada"}
 	c.Set("authUser", user)
 
 	mw := rest.AccessLogMiddleware(logger)
@@ -218,7 +223,7 @@ func TestAccessLogMiddleware_4xxUsesInfoLevel(t *testing.T) {
 
 	mw := rest.AccessLogMiddleware(logger)
 	handler := mw(func(c echo.Context) error {
-		return c.JSON(http.StatusNotFound, rest.ResponseError{Message: "not found"})
+		return c.JSON(http.StatusNotFound, rest.ResponseError{Message: accessLogMsgNotFound})
 	})
 
 	err := handler(c)
