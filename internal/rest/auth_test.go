@@ -16,8 +16,11 @@ import (
 )
 
 const (
-	testUUID          = "test-uuid-1234"
-	testFirstNameTaro = "Taro"
+	testUUID            = "test-uuid-1234"
+	testFirstNameTaro   = "Taro"
+	testFirstNameHanako = "Hanako"
+	testLastNameYamada  = "Yamada"
+	testLastNameTanaka  = "Tanaka"
 )
 
 func TestAuthMiddleware_Development_ValidUUID(t *testing.T) {
@@ -29,7 +32,7 @@ func TestAuthMiddleware_Development_ValidUUID(t *testing.T) {
 	c := e.NewContext(req, rec)
 
 	repo := new(mocks.MockAuthService)
-	user := domain.User{ID: 1, UUID: testUUID, FirstName: testFirstNameTaro, LastName: "Yamada"}
+	user := domain.User{ID: 1, UUID: testUUID, FirstName: testFirstNameTaro, LastName: testLastNameYamada}
 	repo.On("GetByUUID", mock.Anything, testUUID).Return(user, nil)
 
 	mw := rest.AuthMiddleware("development", repo)
@@ -76,7 +79,7 @@ func TestAuthHandler_GetMe_OK(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	user := domain.User{ID: 1, UUID: testUUID, FirstName: testFirstNameTaro, LastName: "Yamada"}
+	user := domain.User{ID: 1, UUID: testUUID, FirstName: testFirstNameTaro, LastName: testLastNameYamada}
 	c.Set("authUser", user)
 
 	h := &rest.AuthHandler{}

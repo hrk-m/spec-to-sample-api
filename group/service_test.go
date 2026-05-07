@@ -12,6 +12,30 @@ import (
 	"github.com/hrk-m/spec-to-dev-workflow/sample-api/group/mocks"
 )
 
+const (
+	groupTestName          = "dev-team"
+	groupTestDescription   = "developers"
+	groupFrontendTeam      = "Frontend Team"
+	groupBackendTeam       = "Backend Team"
+	groupEngineering       = "Engineering"
+	groupSoloName          = "Solo"
+	groupTrimmedName       = "Trimmed"
+	groupParentName        = "parent"
+	groupChildName         = "child"
+	groupMemberUUID1       = "00000000-0000-0000-0000-000000000001"
+	groupMemberUUID2       = "00000000-0000-0000-0000-000000000002"
+	groupMemberUUID3       = "00000000-0000-0000-0000-000000000003"
+	groupMemberUUID        = "uuid-1"
+	groupMemberUUIDLegacy2 = "uuid-2"
+	testFirstNameTaro      = "Taro"
+	testFirstNameHanako    = "Hanako"
+	testFirstNameJiro      = "Jiro"
+	testLastNameYamada     = "Yamada"
+	testLastNameSuzuki     = "Suzuki"
+	testLastNameTanaka     = "Tanaka"
+	testLastNameUser       = "User"
+)
+
 func newGroupService(t *testing.T) (*group.Service, *mocks.MockGroupRepository, *mocks.MockGroupRelationRepository) {
 	t.Helper()
 	repo := new(mocks.MockGroupRepository)
@@ -24,7 +48,7 @@ func newGroupService(t *testing.T) (*group.Service, *mocks.MockGroupRepository, 
 func TestService_GetByID_OK(t *testing.T) {
 	svc, repo, _ := newGroupService(t)
 
-	expected := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 5}
+	expected := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 5}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(expected, nil)
 
 	result, err := svc.GetByID(context.Background(), 1)
@@ -71,8 +95,8 @@ func TestService_ListSubgroups_WithChildren(t *testing.T) {
 	svc, _, relRepo := newGroupService(t)
 
 	children := []domain.Group{
-		{ID: 2, Name: "Frontend Team", Description: "", MemberCount: 2},
-		{ID: 3, Name: "Backend Team", Description: "", MemberCount: 3},
+		{ID: 2, Name: groupFrontendTeam, Description: "", MemberCount: 2},
+		{ID: 3, Name: groupBackendTeam, Description: "", MemberCount: 3},
 	}
 	relRepo.On("ListChildren", mock.Anything, uint64(1)).Return(children, nil)
 
@@ -123,13 +147,13 @@ func TestService_ListGroupMembers_OK(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 2}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 2}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
-	src1 := []domain.SourceGroup{{GroupID: 1, GroupName: "dev-team"}}
+	src1 := []domain.SourceGroup{{GroupID: 1, GroupName: groupTestName}}
 	members := []domain.GroupMember{
-		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada", SourceGroups: src1},
-		{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Suzuki", SourceGroups: src1},
+		{ID: 1, UUID: groupMemberUUID1, FirstName: testFirstNameTaro, LastName: testLastNameYamada, SourceGroups: src1},
+		{ID: 2, UUID: groupMemberUUID2, FirstName: testFirstNameHanako, LastName: testLastNameSuzuki, SourceGroups: src1},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "", []uint64(nil)).
 		Return(members, 2, 0, nil)
@@ -147,17 +171,17 @@ func TestService_ListGroupMembers_WithSearch(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 2}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 2}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
-	src := []domain.SourceGroup{{GroupID: 1, GroupName: "dev-team"}}
+	src := []domain.SourceGroup{{GroupID: 1, GroupName: groupTestName}}
 	members := []domain.GroupMember{
-		{ID: 1, UUID: "00000000-0000-0000-0000-000000000001", FirstName: "Taro", LastName: "Yamada", SourceGroups: src},
+		{ID: 1, UUID: groupMemberUUID1, FirstName: testFirstNameTaro, LastName: testLastNameYamada, SourceGroups: src},
 	}
-	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "Yamada", []uint64(nil)).
+	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, testLastNameYamada, []uint64(nil)).
 		Return(members, 2, 0, nil)
 
-	result, total, _, err := svc.ListGroupMembers(context.Background(), 1, 500, 0, "Yamada", nil)
+	result, total, _, err := svc.ListGroupMembers(context.Background(), 1, 500, 0, testLastNameYamada, nil)
 
 	assert.NoError(t, err)
 	assert.Len(t, result, 1)
@@ -218,7 +242,7 @@ func TestService_ListGroupMembers_RepositoryError(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 2}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 2}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "", []uint64(nil)).
 		Return([]domain.GroupMember(nil), 0, 0, domain.ErrInternalServerError)
@@ -234,7 +258,7 @@ func TestService_ListGroupMembers_EmptyResult(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 0}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 0}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "", []uint64(nil)).
 		Return([]domain.GroupMember{}, 0, 0, nil)
@@ -256,13 +280,22 @@ func TestService_ListGroupMembers_MultiLevel(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "Engineering", Description: "", MemberCount: 3}
+	groupResp := domain.Group{ID: 1, Name: groupEngineering, Description: "", MemberCount: 3}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	members := []domain.GroupMember{
-		{ID: 1, UUID: "uuid-1", FirstName: "Taro", LastName: "Yamada", SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: "Engineering"}}},
-		{ID: 2, UUID: "uuid-2", FirstName: "Hanako", LastName: "Suzuki", SourceGroups: []domain.SourceGroup{{GroupID: 2, GroupName: "Frontend Team"}}},
-		{ID: 3, UUID: "uuid-3", FirstName: "Jiro", LastName: "Tanaka", SourceGroups: []domain.SourceGroup{{GroupID: 3, GroupName: "Backend Team"}}},
+		{
+			ID: 1, UUID: groupMemberUUID, FirstName: testFirstNameTaro, LastName: testLastNameYamada,
+			SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: groupEngineering}},
+		},
+		{
+			ID: 2, UUID: groupMemberUUIDLegacy2, FirstName: testFirstNameHanako, LastName: testLastNameSuzuki,
+			SourceGroups: []domain.SourceGroup{{GroupID: 2, GroupName: groupFrontendTeam}},
+		},
+		{
+			ID: 3, UUID: "uuid-3", FirstName: testFirstNameJiro, LastName: testLastNameTanaka,
+			SourceGroups: []domain.SourceGroup{{GroupID: 3, GroupName: groupBackendTeam}},
+		},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "", []uint64(nil)).
 		Return(members, 3, 0, nil)
@@ -283,13 +316,13 @@ func TestService_ListGroupMembers_DuplicateUserParentPriority(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "Engineering", Description: "", MemberCount: 1}
+	groupResp := domain.Group{ID: 1, Name: groupEngineering, Description: "", MemberCount: 1}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	// User 5 belongs to both parent(1) and child(2); both source groups are returned.
-	dupSources := []domain.SourceGroup{{GroupID: 1, GroupName: "Engineering"}, {GroupID: 2, GroupName: "SubGroup"}}
+	dupSources := []domain.SourceGroup{{GroupID: 1, GroupName: groupEngineering}, {GroupID: 2, GroupName: "SubGroup"}}
 	members := []domain.GroupMember{
-		{ID: 5, UUID: "uuid-5", FirstName: "Duplicate", LastName: "User", SourceGroups: dupSources},
+		{ID: 5, UUID: "uuid-5", FirstName: "Duplicate", LastName: testLastNameUser, SourceGroups: dupSources},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "", []uint64(nil)).
 		Return(members, 1, 1, nil)
@@ -336,11 +369,14 @@ func TestService_ListGroupMembers_QFilter(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "Engineering", Description: "", MemberCount: 5}
+	groupResp := domain.Group{ID: 1, Name: groupEngineering, Description: "", MemberCount: 5}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	members := []domain.GroupMember{
-		{ID: 2, UUID: "uuid-2", FirstName: "Hanako", LastName: "Sato", SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: "Engineering"}}},
+		{
+			ID: 2, UUID: groupMemberUUIDLegacy2, FirstName: testFirstNameHanako, LastName: "Sato",
+			SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: groupEngineering}},
+		},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "Sato", []uint64(nil)).
 		Return(members, 1, 0, nil)
@@ -360,12 +396,12 @@ func TestService_ListGroupMembers_NoDescendants(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "Solo", Description: "", MemberCount: 2}
+	groupResp := domain.Group{ID: 1, Name: groupSoloName, Description: "", MemberCount: 2}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	members := []domain.GroupMember{
-		{ID: 1, UUID: "uuid-1", FirstName: "A", LastName: "User", SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: "Solo"}}},
-		{ID: 2, UUID: "uuid-2", FirstName: "B", LastName: "User", SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: "Solo"}}},
+		{ID: 1, UUID: groupMemberUUID, FirstName: "A", LastName: testLastNameUser, SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: groupSoloName}}},
+		{ID: 2, UUID: groupMemberUUIDLegacy2, FirstName: "B", LastName: testLastNameUser, SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: groupSoloName}}},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "", []uint64(nil)).
 		Return(members, 2, 0, nil)
@@ -435,7 +471,7 @@ func TestService_ListGroupMembers_DBError(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "", MemberCount: 0}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: "", MemberCount: 0}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "", []uint64(nil)).
 		Return([]domain.GroupMember(nil), 0, 0, domain.ErrInternalServerError)
@@ -452,11 +488,11 @@ func TestService_ListGroupMembers_ExcludeGroupIDs_Nil(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "Engineering", Description: "", MemberCount: 2}
+	groupResp := domain.Group{ID: 1, Name: groupEngineering, Description: "", MemberCount: 2}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	members := []domain.GroupMember{
-		{ID: 1, UUID: "uuid-1", FirstName: "A", LastName: "B", SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: "Engineering"}}},
+		{ID: 1, UUID: groupMemberUUID, FirstName: "A", LastName: "B", SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: groupEngineering}}},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "", []uint64(nil)).
 		Return(members, 1, 0, nil)
@@ -475,11 +511,11 @@ func TestService_ListGroupMembers_ExcludeGroupIDs_Propagated(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "Engineering", Description: "", MemberCount: 3}
+	groupResp := domain.Group{ID: 1, Name: groupEngineering, Description: "", MemberCount: 3}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	members := []domain.GroupMember{
-		{ID: 1, UUID: "uuid-1", FirstName: "A", LastName: "B", SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: "Engineering"}}},
+		{ID: 1, UUID: groupMemberUUID, FirstName: "A", LastName: "B", SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: groupEngineering}}},
 	}
 	repo.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "", []uint64{28}).
 		Return(members, 1, 0, nil)
@@ -517,7 +553,7 @@ func TestService_ListGroups_WithSearch(t *testing.T) {
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
 	groups := []domain.Group{
-		{ID: 2, Name: "dev-team", Description: "developers", MemberCount: 0},
+		{ID: 2, Name: groupTestName, Description: groupTestDescription, MemberCount: 0},
 	}
 	repo.On("ListGroups", mock.Anything, "dev", 20, 0).Return(groups, 5, nil)
 
@@ -525,7 +561,7 @@ func TestService_ListGroups_WithSearch(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Len(t, result, 1)
-	assert.Equal(t, "dev-team", result[0].Name)
+	assert.Equal(t, groupTestName, result[0].Name)
 	assert.Equal(t, 5, total)
 	repo.AssertExpectations(t)
 }
@@ -615,8 +651,8 @@ func TestService_Store_TrimsName(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	expected := domain.Group{ID: 1, Name: "Trimmed", Description: "", MemberCount: 1}
-	repo.On("Store", mock.Anything, "Trimmed", "", uint64(10)).Return(expected, nil)
+	expected := domain.Group{ID: 1, Name: groupTrimmedName, Description: "", MemberCount: 1}
+	repo.On("Store", mock.Anything, groupTrimmedName, "", uint64(10)).Return(expected, nil)
 
 	result, err := svc.Store(context.Background(), "  Trimmed  ", "", uint64(10))
 
@@ -712,8 +748,8 @@ func TestService_Update_TrimsName(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	expected := domain.Group{ID: 1, Name: "Trimmed", Description: "", MemberCount: 0}
-	repo.On("Update", mock.Anything, uint64(1), "Trimmed", "", uint64(10)).Return(expected, nil)
+	expected := domain.Group{ID: 1, Name: groupTrimmedName, Description: "", MemberCount: 0}
+	repo.On("Update", mock.Anything, uint64(1), groupTrimmedName, "", uint64(10)).Return(expected, nil)
 
 	result, err := svc.Update(context.Background(), 1, "  Trimmed  ", "", uint64(10))
 
@@ -858,12 +894,12 @@ func TestService_ListNonGroupMembers_OK(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 1}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 1}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	users := []domain.User{
-		{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Suzuki"},
-		{ID: 3, UUID: "00000000-0000-0000-0000-000000000003", FirstName: "Jiro", LastName: "Tanaka"},
+		{ID: 2, UUID: groupMemberUUID2, FirstName: testFirstNameHanako, LastName: testLastNameSuzuki},
+		{ID: 3, UUID: groupMemberUUID3, FirstName: testFirstNameJiro, LastName: testLastNameTanaka},
 	}
 	repo.On("ListNonGroupMembers", mock.Anything, uint64(1), 500, 0, "").
 		Return(users, 2, nil)
@@ -881,16 +917,16 @@ func TestService_ListNonGroupMembers_WithSearch(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 1}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 1}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	users := []domain.User{
-		{ID: 3, UUID: "00000000-0000-0000-0000-000000000003", FirstName: "Jiro", LastName: "Tanaka"},
+		{ID: 3, UUID: groupMemberUUID3, FirstName: testFirstNameJiro, LastName: testLastNameTanaka},
 	}
-	repo.On("ListNonGroupMembers", mock.Anything, uint64(1), 500, 0, "Tanaka").
+	repo.On("ListNonGroupMembers", mock.Anything, uint64(1), 500, 0, testLastNameTanaka).
 		Return(users, 5, nil)
 
-	result, total, err := svc.ListNonGroupMembers(context.Background(), uint64(1), 500, 0, "Tanaka")
+	result, total, err := svc.ListNonGroupMembers(context.Background(), uint64(1), 500, 0, testLastNameTanaka)
 
 	assert.NoError(t, err)
 	assert.Len(t, result, 1)
@@ -903,7 +939,7 @@ func TestService_ListNonGroupMembers_EmptyResult(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 3}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 3}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	repo.On("ListNonGroupMembers", mock.Anything, uint64(1), 500, 0, "").
@@ -971,7 +1007,7 @@ func TestService_ListNonGroupMembers_RepositoryError(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 1}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 1}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	repo.On("ListNonGroupMembers", mock.Anything, uint64(1), 500, 0, "").
@@ -988,13 +1024,13 @@ func TestService_AddGroupMembers_OK(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 1}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 1}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	userRepo.On("CountByIDs", mock.Anything, []uint64{2, 3}).Return(2, nil)
 
-	user2 := domain.User{ID: 2, UUID: "00000000-0000-0000-0000-000000000002", FirstName: "Hanako", LastName: "Suzuki"}
-	user3 := domain.User{ID: 3, UUID: "00000000-0000-0000-0000-000000000003", FirstName: "Jiro", LastName: "Tanaka"}
+	user2 := domain.User{ID: 2, UUID: groupMemberUUID2, FirstName: testFirstNameHanako, LastName: testLastNameSuzuki}
+	user3 := domain.User{ID: 3, UUID: groupMemberUUID3, FirstName: testFirstNameJiro, LastName: testLastNameTanaka}
 	added := []domain.User{user2, user3}
 	repo.On("AddGroupMembers", mock.Anything, uint64(1), []uint64{2, 3}).Return(added, nil)
 
@@ -1026,7 +1062,7 @@ func TestService_AddGroupMembers_UserNotFound(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 0}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 0}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	// CountByIDs returns fewer than requested — at least one user does not exist.
@@ -1044,7 +1080,7 @@ func TestService_AddGroupMembers_AlreadyMember(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 1}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 1}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	userRepo.On("CountByIDs", mock.Anything, []uint64{1}).Return(1, nil)
@@ -1063,7 +1099,7 @@ func TestService_AddGroupMembers_CountByIDsError(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 0}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 0}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	userRepo.On("CountByIDs", mock.Anything, []uint64{2}).Return(0, domain.ErrInternalServerError)
@@ -1080,7 +1116,7 @@ func TestService_AddGroupMembers_RepositoryError(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 0}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 0}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	userRepo.On("CountByIDs", mock.Anything, []uint64{2}).Return(1, nil)
@@ -1099,13 +1135,13 @@ func TestService_AddGroupMembers_DuplicateUserIDs(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 0}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 0}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 
 	// After deduplication [2, 2] becomes [2], so CountByIDs is called with [2] and returns 1.
 	userRepo.On("CountByIDs", mock.Anything, []uint64{2}).Return(1, nil)
 
-	user2 := domain.User{ID: 2, FirstName: "Hanako", LastName: "Suzuki"}
+	user2 := domain.User{ID: 2, FirstName: testFirstNameHanako, LastName: testLastNameSuzuki}
 	repo.On("AddGroupMembers", mock.Anything, uint64(1), []uint64{2}).Return([]domain.User{user2}, nil)
 
 	result, err := svc.AddGroupMembers(context.Background(), 1, []uint64{2, 2})
@@ -1121,7 +1157,7 @@ func TestService_RemoveGroupMembers_SingleMember(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 1}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 1}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 	repo.On("RemoveGroupMembers", mock.Anything, uint64(1), []uint64{2}).Return(nil)
 
@@ -1136,7 +1172,7 @@ func TestService_RemoveGroupMembers_BulkDelete(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 3}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 3}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 	repo.On("RemoveGroupMembers", mock.Anything, uint64(1), []uint64{2, 3, 4}).Return(nil)
 
@@ -1165,7 +1201,7 @@ func TestService_RemoveGroupMembers_NonMemberIncluded(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 1}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 1}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 	repo.On("RemoveGroupMembers", mock.Anything, uint64(1), []uint64{9999}).Return(domain.ErrNotFound)
 
@@ -1180,7 +1216,7 @@ func TestService_RemoveGroupMembers_DBError(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 1}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 1}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 	repo.On("RemoveGroupMembers", mock.Anything, uint64(1), []uint64{2}).Return(domain.ErrInternalServerError)
 
@@ -1195,7 +1231,7 @@ func TestService_RemoveGroupMembers_SingleItemUserIDs(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 1}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 1}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 	repo.On("RemoveGroupMembers", mock.Anything, uint64(1), []uint64{5}).Return(nil)
 
@@ -1210,7 +1246,7 @@ func TestService_RemoveGroupMembers_DuplicateUserIDs(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 1}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 1}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 	// After deduplication [2, 2] becomes [2], so RemoveGroupMembers is called with [2].
 	repo.On("RemoveGroupMembers", mock.Anything, uint64(1), []uint64{2}).Return(nil)
@@ -1227,7 +1263,7 @@ func TestService_RemoveGroupMembers_IsolatedViaInterface(t *testing.T) {
 	userRepo := new(mocks.MockUserRepository)
 	svc := group.NewService(repo, userRepo, new(mocks.MockGroupRelationRepository))
 
-	groupResp := domain.Group{ID: 1, Name: "dev-team", Description: "developers", MemberCount: 2}
+	groupResp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 2}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(groupResp, nil)
 	repo.On("RemoveGroupMembers", mock.Anything, uint64(1), []uint64{2, 3}).Return(nil)
 
@@ -1254,8 +1290,8 @@ func newSubGroupService(t *testing.T) (*group.Service, *mocks.MockGroupRepositor
 func TestService_CreateSubGroup_OK(t *testing.T) {
 	svc, repo, relRepo := newSubGroupService(t)
 
-	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
-	child := domain.Group{ID: 2, Name: "child", Description: "", MemberCount: 0}
+	parent := domain.Group{ID: 1, Name: groupParentName, Description: "", MemberCount: 0}
+	child := domain.Group{ID: 2, Name: groupChildName, Description: "", MemberCount: 0}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
 	repo.On("GetByID", mock.Anything, uint64(2)).Return(child, nil)
 	relRepo.On("GetAncestorIDs", mock.Anything, uint64(1)).Return([]uint64{}, nil)
@@ -1307,7 +1343,7 @@ func TestService_CreateSubGroup_ParentNotFound(t *testing.T) {
 func TestService_CreateSubGroup_ChildNotFound(t *testing.T) {
 	svc, repo, _ := newSubGroupService(t)
 
-	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
+	parent := domain.Group{ID: 1, Name: groupParentName, Description: "", MemberCount: 0}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
 	repo.On("GetByID", mock.Anything, uint64(9999)).Return(domain.Group{}, domain.ErrNotFound)
 
@@ -1341,8 +1377,8 @@ func TestService_CreateSubGroup_CycleDetected(t *testing.T) {
 func TestService_CreateSubGroup_ComponentSizeBoundary_OK(t *testing.T) {
 	svc, repo, relRepo := newSubGroupService(t)
 
-	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
-	child := domain.Group{ID: 10, Name: "child", Description: "", MemberCount: 0}
+	parent := domain.Group{ID: 1, Name: groupParentName, Description: "", MemberCount: 0}
+	child := domain.Group{ID: 10, Name: groupChildName, Description: "", MemberCount: 0}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
 	repo.On("GetByID", mock.Anything, uint64(10)).Return(child, nil)
 	relRepo.On("GetAncestorIDs", mock.Anything, uint64(1)).Return([]uint64{}, nil)
@@ -1363,8 +1399,8 @@ func TestService_CreateSubGroup_ComponentSizeBoundary_OK(t *testing.T) {
 func TestService_CreateSubGroup_ComponentSizeExceeded(t *testing.T) {
 	svc, repo, relRepo := newSubGroupService(t)
 
-	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
-	child := domain.Group{ID: 11, Name: "child", Description: "", MemberCount: 0}
+	parent := domain.Group{ID: 1, Name: groupParentName, Description: "", MemberCount: 0}
+	child := domain.Group{ID: 11, Name: groupChildName, Description: "", MemberCount: 0}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
 	repo.On("GetByID", mock.Anything, uint64(11)).Return(child, nil)
 	relRepo.On("GetAncestorIDs", mock.Anything, uint64(1)).Return([]uint64{}, nil)
@@ -1381,8 +1417,8 @@ func TestService_CreateSubGroup_ComponentSizeExceeded(t *testing.T) {
 func TestService_CreateSubGroup_DepthBoundary_OK(t *testing.T) {
 	svc, repo, relRepo := newSubGroupService(t)
 
-	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
-	child := domain.Group{ID: 2, Name: "child", Description: "", MemberCount: 0}
+	parent := domain.Group{ID: 1, Name: groupParentName, Description: "", MemberCount: 0}
+	child := domain.Group{ID: 2, Name: groupChildName, Description: "", MemberCount: 0}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
 	repo.On("GetByID", mock.Anything, uint64(2)).Return(child, nil)
 	relRepo.On("GetAncestorIDs", mock.Anything, uint64(1)).Return([]uint64{}, nil)
@@ -1403,8 +1439,8 @@ func TestService_CreateSubGroup_DepthBoundary_OK(t *testing.T) {
 func TestService_CreateSubGroup_DepthExceeded(t *testing.T) {
 	svc, repo, relRepo := newSubGroupService(t)
 
-	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
-	child := domain.Group{ID: 2, Name: "child", Description: "", MemberCount: 0}
+	parent := domain.Group{ID: 1, Name: groupParentName, Description: "", MemberCount: 0}
+	child := domain.Group{ID: 2, Name: groupChildName, Description: "", MemberCount: 0}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
 	repo.On("GetByID", mock.Anything, uint64(2)).Return(child, nil)
 	relRepo.On("GetAncestorIDs", mock.Anything, uint64(1)).Return([]uint64{}, nil)
@@ -1422,8 +1458,8 @@ func TestService_CreateSubGroup_DepthExceeded(t *testing.T) {
 func TestService_CreateSubGroup_Conflict(t *testing.T) {
 	svc, repo, relRepo := newSubGroupService(t)
 
-	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
-	child := domain.Group{ID: 2, Name: "child", Description: "", MemberCount: 0}
+	parent := domain.Group{ID: 1, Name: groupParentName, Description: "", MemberCount: 0}
+	child := domain.Group{ID: 2, Name: groupChildName, Description: "", MemberCount: 0}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
 	repo.On("GetByID", mock.Anything, uint64(2)).Return(child, nil)
 	relRepo.On("GetAncestorIDs", mock.Anything, uint64(1)).Return([]uint64{}, nil)
@@ -1441,8 +1477,8 @@ func TestService_CreateSubGroup_Conflict(t *testing.T) {
 func TestService_CreateSubGroup_DBError(t *testing.T) {
 	svc, repo, relRepo := newSubGroupService(t)
 
-	parent := domain.Group{ID: 1, Name: "parent", Description: "", MemberCount: 0}
-	child := domain.Group{ID: 2, Name: "child", Description: "", MemberCount: 0}
+	parent := domain.Group{ID: 1, Name: groupParentName, Description: "", MemberCount: 0}
+	child := domain.Group{ID: 2, Name: groupChildName, Description: "", MemberCount: 0}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(parent, nil)
 	repo.On("GetByID", mock.Anything, uint64(2)).Return(child, nil)
 	relRepo.On("GetAncestorIDs", mock.Anything, uint64(1)).Return([]uint64{}, nil)

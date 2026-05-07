@@ -12,15 +12,22 @@ import (
 	"github.com/hrk-m/spec-to-dev-workflow/sample-api/user/mocks"
 )
 
+const (
+	testUserUUID1      = "550e8400-e29b-41d4-a716-446655440001"
+	testFirstNameTaro  = "Taro"
+	testLastNameYamada = "Yamada"
+	testLastNameSuzuki = "Suzuki"
+)
+
 func TestService_ListUsers_OK(t *testing.T) {
 	repo := new(mocks.MockUserRepository)
 	svc := user.NewService(repo)
 
 	expected := []domain.User{
-		{ID: 1, UUID: "550e8400-e29b-41d4-a716-446655440001", FirstName: "Taro", LastName: "Yamada"},
-		{ID: 2, UUID: "550e8400-e29b-41d4-a716-446655440002", FirstName: "Hanako", LastName: "Suzuki"},
+		{ID: 1, UUID: testUserUUID1, FirstName: testFirstNameTaro, LastName: testLastNameYamada},
+		{ID: 2, UUID: "550e8400-e29b-41d4-a716-446655440002", FirstName: "Hanako", LastName: testLastNameSuzuki},
 	}
-	repo.On("ListUsers", mock.Anything, "Suzuki", 500, 0).Return(expected[1:2], 15, nil)
+	repo.On("ListUsers", mock.Anything, testLastNameSuzuki, 500, 0).Return(expected[1:2], 15, nil)
 
 	result, total, err := svc.ListUsers(context.Background(), " Suzuki ", 500, 0)
 
@@ -93,7 +100,7 @@ func TestService_GetUser_OK(t *testing.T) {
 	repo := new(mocks.MockUserRepository)
 	svc := user.NewService(repo)
 
-	expected := &domain.User{ID: 1, UUID: "550e8400-e29b-41d4-a716-446655440001", FirstName: "Taro", LastName: "Yamada"}
+	expected := &domain.User{ID: 1, UUID: testUserUUID1, FirstName: testFirstNameTaro, LastName: testLastNameYamada}
 	repo.On("GetByID", mock.Anything, uint64(1)).Return(expected, nil)
 
 	result, err := svc.GetUser(context.Background(), uint64(1))

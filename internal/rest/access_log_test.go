@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	accessLogStatusOK       = "ok"
-	accessLogMsgNotFound    = "not found"
+	accessLogStatusOK    = "ok"
+	accessLogMsgNotFound = "not found"
+	accessLogStatusKey   = "status"
 )
 
 func newTestLogger(buf *bytes.Buffer) *slog.Logger {
@@ -34,12 +35,12 @@ func TestAccessLogMiddleware_AuthenticatedRequest(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	user := domain.User{ID: 1, UUID: "test-uuid-5678", FirstName: testFirstNameTaro, LastName: "Yamada"}
+	user := domain.User{ID: 1, UUID: "test-uuid-5678", FirstName: testFirstNameTaro, LastName: testLastNameYamada}
 	c.Set("authUser", user)
 
 	mw := rest.AccessLogMiddleware(logger)
 	handler := mw(func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{"status": accessLogStatusOK})
+		return c.JSON(http.StatusOK, map[string]string{accessLogStatusKey: accessLogStatusOK})
 	})
 
 	err := handler(c)
@@ -65,7 +66,7 @@ func TestAccessLogMiddleware_NoAuthUser(t *testing.T) {
 
 	mw := rest.AccessLogMiddleware(logger)
 	handler := mw(func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{"status": accessLogStatusOK})
+		return c.JSON(http.StatusOK, map[string]string{accessLogStatusKey: accessLogStatusOK})
 	})
 
 	err := handler(c)
@@ -122,7 +123,7 @@ func TestAccessLogMiddleware_StatusCode(t *testing.T) {
 	var logEntry map[string]interface{}
 	require.NoError(t, json.NewDecoder(buf).Decode(&logEntry))
 
-	status, ok := logEntry["status"].(float64)
+	status, ok := logEntry[accessLogStatusKey].(float64)
 	assert.True(t, ok, "status should be a number")
 	assert.Equal(t, float64(http.StatusNotFound), status)
 }
@@ -136,7 +137,7 @@ func TestAccessLogMiddleware_5xxUsesErrorLevel(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	user := domain.User{ID: 1, UUID: "test-uuid-1234", FirstName: testFirstNameTaro, LastName: "Yamada"}
+	user := domain.User{ID: 1, UUID: "test-uuid-1234", FirstName: testFirstNameTaro, LastName: testLastNameYamada}
 	c.Set("authUser", user)
 
 	mw := rest.AccessLogMiddleware(logger)
@@ -151,7 +152,7 @@ func TestAccessLogMiddleware_5xxUsesErrorLevel(t *testing.T) {
 	require.NoError(t, json.NewDecoder(buf).Decode(&logEntry))
 
 	assert.Equal(t, "ERROR", logEntry["level"])
-	status, ok := logEntry["status"].(float64)
+	status, ok := logEntry[accessLogStatusKey].(float64)
 	assert.True(t, ok)
 	assert.Equal(t, float64(http.StatusInternalServerError), status)
 }
@@ -204,7 +205,7 @@ func TestAccessLogMiddleware_ErrorReturnWithoutWriteHeader(t *testing.T) {
 	assert.Equal(t, "ERROR", logEntry["level"])
 
 	// (b) status field must be 500
-	status, ok := logEntry["status"].(float64)
+	status, ok := logEntry[accessLogStatusKey].(float64)
 	assert.True(t, ok, "status should be a number")
 	assert.Equal(t, float64(http.StatusInternalServerError), status)
 

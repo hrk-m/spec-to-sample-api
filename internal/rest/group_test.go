@@ -17,17 +17,19 @@ import (
 )
 
 const (
-	groupTestName        = "dev-team"
-	groupFrontendTeam    = "Frontend Team"
-	groupEngineering     = "Engineering"
-	groupMemberUUID1     = "00000000-0000-0000-0000-000000000001"
-	groupMemberUUID2     = "00000000-0000-0000-0000-000000000002"
-	groupMemberUUID      = "uuid-1"
-	groupSubName         = "SubGroup"
-	groupSubShortName    = "Sub"
-	testLastNameSuzuki   = "Suzuki"
-	testFirstNameJiro    = "Jiro"
-	groupAuthUserUUID10  = "00000000-0000-0000-0000-000000000010"
+	groupTestName          = "dev-team"
+	groupFrontendTeam      = "Frontend Team"
+	groupEngineering       = "Engineering"
+	groupTestDescription   = "developers"
+	groupMemberUUID1       = "00000000-0000-0000-0000-000000000001"
+	groupMemberUUID2       = "00000000-0000-0000-0000-000000000002"
+	groupMemberUUID        = "uuid-1"
+	groupMemberUUIDLegacy2 = "uuid-2"
+	groupSubName           = "SubGroup"
+	groupSubShortName      = "Sub"
+	testLastNameSuzuki     = "Suzuki"
+	testFirstNameJiro      = "Jiro"
+	groupAuthUserUUID10    = "00000000-0000-0000-0000-000000000010"
 )
 
 func TestGroupHandler_GetByID_OK(t *testing.T) {
@@ -40,7 +42,7 @@ func TestGroupHandler_GetByID_OK(t *testing.T) {
 	c.SetParamValues("1")
 
 	svc := new(mocks.MockGroupService)
-	resp := domain.Group{ID: 1, Name: groupTestName, Description: "developers", MemberCount: 5}
+	resp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 5}
 	svc.On("GetByID", mock.Anything, uint64(1)).Return(resp, nil)
 	svc.On("ListSubgroups", mock.Anything, uint64(1)).Return([]domain.Group{}, nil)
 
@@ -76,7 +78,7 @@ func TestGroupHandler_GetByID_WithSubgroups(t *testing.T) {
 	c.SetParamValues("1")
 
 	svc := new(mocks.MockGroupService)
-	resp := domain.Group{ID: 1, Name: groupTestName, Description: "developers", MemberCount: 5}
+	resp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 5}
 	subgroups := []domain.Group{
 		{ID: 2, Name: groupFrontendTeam, Description: "FE チーム", MemberCount: 3},
 		{ID: 3, Name: "Backend Team", Description: "BE チーム", MemberCount: 4},
@@ -230,7 +232,7 @@ func TestGroupHandler_GetByID_ListSubgroupsError(t *testing.T) {
 	c.SetParamValues("1")
 
 	svc := new(mocks.MockGroupService)
-	resp := domain.Group{ID: 1, Name: groupTestName, Description: "developers", MemberCount: 5}
+	resp := domain.Group{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 5}
 	svc.On("GetByID", mock.Anything, uint64(1)).Return(resp, nil)
 	svc.On("ListSubgroups", mock.Anything, uint64(1)).
 		Return([]domain.Group(nil), domain.ErrInternalServerError)
@@ -264,8 +266,8 @@ func TestGroupHandler_ListGroupMembers_OK(t *testing.T) {
 	engSrc := []domain.SourceGroup{{GroupID: 1, GroupName: groupEngineering}}
 	feSrc := []domain.SourceGroup{{GroupID: 2, GroupName: groupFrontendTeam}}
 	members := []domain.GroupMember{
-		{ID: 1, UUID: groupMemberUUID1, FirstName: testFirstNameTaro, LastName: "Yamada", SourceGroups: engSrc},
-		{ID: 2, UUID: groupMemberUUID2, FirstName: "Hanako", LastName: "Sato", SourceGroups: feSrc},
+		{ID: 1, UUID: groupMemberUUID1, FirstName: testFirstNameTaro, LastName: testLastNameYamada, SourceGroups: engSrc},
+		{ID: 2, UUID: groupMemberUUID2, FirstName: testFirstNameHanako, LastName: "Sato", SourceGroups: feSrc},
 	}
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "", []uint64(nil)).
 		Return(members, 2, 0, nil)
@@ -379,7 +381,7 @@ func TestGroupHandler_ListGroupMembers_WithSearch(t *testing.T) {
 	svc := new(mocks.MockGroupService)
 	src := []domain.SourceGroup{{GroupID: 1, GroupName: groupEngineering}}
 	members := []domain.GroupMember{
-		{ID: 1, UUID: groupMemberUUID1, FirstName: testFirstNameTaro, LastName: "Yamada", SourceGroups: src},
+		{ID: 1, UUID: groupMemberUUID1, FirstName: testFirstNameTaro, LastName: testLastNameYamada, SourceGroups: src},
 	}
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "Yamada", []uint64(nil)).
 		Return(members, 1, 0, nil)
@@ -651,7 +653,7 @@ func TestGroupHandler_ListGroupMembers_ExcludeGroupIDs_NotSpecified(t *testing.T
 	svc := new(mocks.MockGroupService)
 	members := []domain.GroupMember{
 		{ID: 1, UUID: groupMemberUUID, FirstName: "A", LastName: "B", SourceGroups: []domain.SourceGroup{{GroupID: 1, GroupName: groupEngineering}}},
-		{ID: 2, UUID: "uuid-2", FirstName: "C", LastName: "D", SourceGroups: []domain.SourceGroup{{GroupID: 28, GroupName: groupSubShortName}}},
+		{ID: 2, UUID: groupMemberUUIDLegacy2, FirstName: "C", LastName: "D", SourceGroups: []domain.SourceGroup{{GroupID: 28, GroupName: groupSubShortName}}},
 	}
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "", []uint64(nil)).
 		Return(members, 2, 0, nil)
@@ -706,7 +708,7 @@ func TestGroupHandler_ListGroupMembers_ExcludeGroupIDs_ParentID(t *testing.T) {
 
 	svc := new(mocks.MockGroupService)
 	members := []domain.GroupMember{
-		{ID: 2, UUID: "uuid-2", FirstName: "C", LastName: "D", SourceGroups: []domain.SourceGroup{{GroupID: 28, GroupName: groupSubShortName}}},
+		{ID: 2, UUID: groupMemberUUIDLegacy2, FirstName: "C", LastName: "D", SourceGroups: []domain.SourceGroup{{GroupID: 28, GroupName: groupSubShortName}}},
 	}
 	svc.On("ListGroupMembers", mock.Anything, uint64(1), 500, 0, "", []uint64{1}).
 		Return(members, 1, 0, nil)
@@ -804,7 +806,7 @@ func TestGroupHandler_ListGroups_OK(t *testing.T) {
 
 	svc := new(mocks.MockGroupService)
 	groups := []domain.Group{
-		{ID: 1, Name: groupTestName, Description: "developers", MemberCount: 1},
+		{ID: 1, Name: groupTestName, Description: groupTestDescription, MemberCount: 1},
 	}
 	svc.On("ListGroups", mock.Anything, "dev", 20, 0).Return(groups, 42, nil)
 
@@ -1039,7 +1041,7 @@ func TestGroupHandler_Store_OK(t *testing.T) {
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: "Yamada"})
+	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: testLastNameYamada})
 
 	svc := new(mocks.MockGroupService)
 	resp := domain.Group{ID: 1, Name: "Test", Description: "Desc", MemberCount: 1}
@@ -1108,7 +1110,7 @@ func TestGroupHandler_Store_BadParam(t *testing.T) {
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: "Yamada"})
+	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: testLastNameYamada})
 
 	svc := new(mocks.MockGroupService)
 	svc.On("Store", mock.Anything, "", "Desc", uint64(1)).
@@ -1133,7 +1135,7 @@ func TestGroupHandler_Store_InternalError(t *testing.T) {
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: "Yamada"})
+	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: testLastNameYamada})
 
 	svc := new(mocks.MockGroupService)
 	svc.On("Store", mock.Anything, "Test", "Desc", uint64(1)).
@@ -1161,7 +1163,7 @@ func TestGroupHandler_Update_OK(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id")
 	c.SetParamNames("id")
 	c.SetParamValues("1")
-	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: "Yamada"})
+	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: testLastNameYamada})
 
 	svc := new(mocks.MockGroupService)
 	resp := domain.Group{ID: 1, Name: "Updated", Description: "New Desc", MemberCount: 5}
@@ -1259,7 +1261,7 @@ func TestGroupHandler_Update_ServiceBadParam(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id")
 	c.SetParamNames("id")
 	c.SetParamValues("1")
-	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: "Yamada"})
+	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: testLastNameYamada})
 
 	svc := new(mocks.MockGroupService)
 	svc.On("Update", mock.Anything, uint64(1), "", "Desc", uint64(1)).
@@ -1287,7 +1289,7 @@ func TestGroupHandler_Update_ServiceNotFound(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id")
 	c.SetParamNames("id")
 	c.SetParamValues("9999")
-	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: "Yamada"})
+	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: testLastNameYamada})
 
 	svc := new(mocks.MockGroupService)
 	svc.On("Update", mock.Anything, uint64(9999), "Updated", "Desc", uint64(1)).
@@ -1315,7 +1317,7 @@ func TestGroupHandler_Update_ServiceInternalError(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id")
 	c.SetParamNames("id")
 	c.SetParamValues("1")
-	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: "Yamada"})
+	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: testLastNameYamada})
 
 	svc := new(mocks.MockGroupService)
 	svc.On("Update", mock.Anything, uint64(1), "Updated", "Desc", uint64(1)).
@@ -1342,7 +1344,7 @@ func TestGroupHandler_Delete_OK(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id")
 	c.SetParamNames("id")
 	c.SetParamValues("1")
-	c.Set("authUser", domain.User{ID: 42, FirstName: testFirstNameTaro, LastName: "Yamada"})
+	c.Set("authUser", domain.User{ID: 42, FirstName: testFirstNameTaro, LastName: testLastNameYamada})
 
 	svc := new(mocks.MockGroupService)
 	svc.On("Delete", mock.Anything, uint64(1), uint64(42)).Return(nil)
@@ -1429,7 +1431,7 @@ func TestGroupHandler_Delete_ServiceNotFound(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id")
 	c.SetParamNames("id")
 	c.SetParamValues("9999")
-	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: "Yamada"})
+	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: testLastNameYamada})
 
 	svc := new(mocks.MockGroupService)
 	svc.On("Delete", mock.Anything, uint64(9999), uint64(1)).Return(domain.ErrNotFound)
@@ -1455,7 +1457,7 @@ func TestGroupHandler_Delete_ServiceInternalError(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id")
 	c.SetParamNames("id")
 	c.SetParamValues("1")
-	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: "Yamada"})
+	c.Set("authUser", domain.User{ID: 1, FirstName: testFirstNameTaro, LastName: testLastNameYamada})
 
 	svc := new(mocks.MockGroupService)
 	svc.On("Delete", mock.Anything, uint64(1), uint64(1)).Return(domain.ErrInternalServerError)
@@ -1483,7 +1485,7 @@ func TestGroupHandler_ListNonGroupMembers_OK(t *testing.T) {
 
 	svc := new(mocks.MockGroupService)
 	users := []domain.User{
-		{ID: 2, UUID: groupMemberUUID2, FirstName: "Hanako", LastName: testLastNameSuzuki},
+		{ID: 2, UUID: groupMemberUUID2, FirstName: testFirstNameHanako, LastName: testLastNameSuzuki},
 	}
 	svc.On("ListNonGroupMembers", mock.Anything, uint64(1), 500, 0, "").Return(users, 1, nil)
 
@@ -1515,7 +1517,7 @@ func TestGroupHandler_ListNonGroupMembers_WithQuery(t *testing.T) {
 
 	svc := new(mocks.MockGroupService)
 	users := []domain.User{
-		{ID: 2, UUID: groupMemberUUID2, FirstName: "Hanako", LastName: testLastNameSuzuki},
+		{ID: 2, UUID: groupMemberUUID2, FirstName: testFirstNameHanako, LastName: testLastNameSuzuki},
 	}
 	svc.On("ListNonGroupMembers", mock.Anything, uint64(1), 500, 0, testLastNameSuzuki).Return(users, 5, nil)
 
@@ -1698,8 +1700,8 @@ func TestGroupHandler_AddGroupMembers_OK(t *testing.T) {
 
 	svc := new(mocks.MockGroupService)
 	added := []domain.User{
-		{ID: 2, UUID: groupMemberUUID2, FirstName: "Hanako", LastName: testLastNameSuzuki},
-		{ID: 3, UUID: "00000000-0000-0000-0000-000000000003", FirstName: testFirstNameJiro, LastName: "Tanaka"},
+		{ID: 2, UUID: groupMemberUUID2, FirstName: testFirstNameHanako, LastName: testLastNameSuzuki},
+		{ID: 3, UUID: "00000000-0000-0000-0000-000000000003", FirstName: testFirstNameJiro, LastName: testLastNameTanaka},
 	}
 	svc.On("AddGroupMembers", mock.Anything, uint64(1), []uint64{2, 3}).Return(added, nil)
 
@@ -2068,7 +2070,7 @@ func TestGroupHandler_CreateSubGroup_OK(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id/subgroups")
 	c.SetParamNames("id")
 	c.SetParamValues("1")
-	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+	c.Set("authUser", domain.User{ID: 10, UUID: groupAuthUserUUID10})
 
 	svc := new(mocks.MockGroupService)
 	expected := domain.GroupRelation{ParentGroupID: 1, ChildGroupID: 2}
@@ -2168,7 +2170,7 @@ func TestGroupHandler_CreateSubGroup_InvalidJSON(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id/subgroups")
 	c.SetParamNames("id")
 	c.SetParamValues("1")
-	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+	c.Set("authUser", domain.User{ID: 10, UUID: groupAuthUserUUID10})
 
 	h := &rest.GroupHandler{Service: new(mocks.MockGroupService)}
 	err := h.CreateSubGroup(c)
@@ -2188,7 +2190,7 @@ func TestGroupHandler_CreateSubGroup_ServiceBadParam(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id/subgroups")
 	c.SetParamNames("id")
 	c.SetParamValues("1")
-	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+	c.Set("authUser", domain.User{ID: 10, UUID: groupAuthUserUUID10})
 
 	svc := new(mocks.MockGroupService)
 	svc.On("CreateSubGroup", mock.Anything, uint64(1), uint64(1)).Return(domain.GroupRelation{}, domain.ErrBadParamInput)
@@ -2216,7 +2218,7 @@ func TestGroupHandler_CreateSubGroup_ServiceNotFound(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id/subgroups")
 	c.SetParamNames("id")
 	c.SetParamValues("1")
-	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+	c.Set("authUser", domain.User{ID: 10, UUID: groupAuthUserUUID10})
 
 	svc := new(mocks.MockGroupService)
 	svc.On("CreateSubGroup", mock.Anything, uint64(1), uint64(9999)).Return(domain.GroupRelation{}, domain.ErrNotFound)
@@ -2244,7 +2246,7 @@ func TestGroupHandler_CreateSubGroup_ServiceConflict(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id/subgroups")
 	c.SetParamNames("id")
 	c.SetParamValues("1")
-	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+	c.Set("authUser", domain.User{ID: 10, UUID: groupAuthUserUUID10})
 
 	svc := new(mocks.MockGroupService)
 	svc.On("CreateSubGroup", mock.Anything, uint64(1), uint64(2)).Return(domain.GroupRelation{}, domain.ErrConflict)
@@ -2272,7 +2274,7 @@ func TestGroupHandler_CreateSubGroup_ServiceInternalError(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id/subgroups")
 	c.SetParamNames("id")
 	c.SetParamValues("1")
-	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+	c.Set("authUser", domain.User{ID: 10, UUID: groupAuthUserUUID10})
 
 	svc := new(mocks.MockGroupService)
 	svc.On("CreateSubGroup", mock.Anything, uint64(1), uint64(2)).Return(domain.GroupRelation{}, domain.ErrInternalServerError)
@@ -2300,7 +2302,7 @@ func TestGroupHandler_DeleteSubGroup_OK(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id/subgroups/:childId")
 	c.SetParamNames("id", "childId")
 	c.SetParamValues("1", "2")
-	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+	c.Set("authUser", domain.User{ID: 10, UUID: groupAuthUserUUID10})
 
 	svc := new(mocks.MockGroupService)
 	svc.On("DeleteSubGroup", mock.Anything, uint64(1), uint64(2)).Return(nil)
@@ -2347,7 +2349,7 @@ func TestGroupHandler_DeleteSubGroup_InvalidID(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id/subgroups/:childId")
 	c.SetParamNames("id", "childId")
 	c.SetParamValues("abc", "2")
-	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+	c.Set("authUser", domain.User{ID: 10, UUID: groupAuthUserUUID10})
 
 	svc := new(mocks.MockGroupService)
 
@@ -2372,7 +2374,7 @@ func TestGroupHandler_DeleteSubGroup_IDZero(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id/subgroups/:childId")
 	c.SetParamNames("id", "childId")
 	c.SetParamValues("0", "2")
-	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+	c.Set("authUser", domain.User{ID: 10, UUID: groupAuthUserUUID10})
 
 	svc := new(mocks.MockGroupService)
 
@@ -2397,7 +2399,7 @@ func TestGroupHandler_DeleteSubGroup_InvalidChildID(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id/subgroups/:childId")
 	c.SetParamNames("id", "childId")
 	c.SetParamValues("1", "abc")
-	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+	c.Set("authUser", domain.User{ID: 10, UUID: groupAuthUserUUID10})
 
 	svc := new(mocks.MockGroupService)
 
@@ -2422,7 +2424,7 @@ func TestGroupHandler_DeleteSubGroup_ChildIDZero(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id/subgroups/:childId")
 	c.SetParamNames("id", "childId")
 	c.SetParamValues("1", "0")
-	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+	c.Set("authUser", domain.User{ID: 10, UUID: groupAuthUserUUID10})
 
 	svc := new(mocks.MockGroupService)
 
@@ -2447,7 +2449,7 @@ func TestGroupHandler_DeleteSubGroup_NotFound(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id/subgroups/:childId")
 	c.SetParamNames("id", "childId")
 	c.SetParamValues("1", "2")
-	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+	c.Set("authUser", domain.User{ID: 10, UUID: groupAuthUserUUID10})
 
 	svc := new(mocks.MockGroupService)
 	svc.On("DeleteSubGroup", mock.Anything, uint64(1), uint64(2)).Return(domain.ErrNotFound)
@@ -2473,7 +2475,7 @@ func TestGroupHandler_DeleteSubGroup_InternalError(t *testing.T) {
 	c.SetPath("/api/v1/groups/:id/subgroups/:childId")
 	c.SetParamNames("id", "childId")
 	c.SetParamValues("1", "2")
-	c.Set("authUser", domain.User{ID: 10, UUID: "00000000-0000-0000-0000-000000000010"})
+	c.Set("authUser", domain.User{ID: 10, UUID: groupAuthUserUUID10})
 
 	svc := new(mocks.MockGroupService)
 	svc.On("DeleteSubGroup", mock.Anything, uint64(1), uint64(2)).Return(domain.ErrInternalServerError)
