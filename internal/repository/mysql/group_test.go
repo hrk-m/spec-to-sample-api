@@ -55,7 +55,7 @@ func TestListGroups_DefaultPagination(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()
 
-	repo := mysqlRepo.NewGroupRepository(db)
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
 	groups, total, err := repo.ListGroups(context.Background(), "", 1, 10)
 
 	assert.NoError(t, err)
@@ -67,7 +67,7 @@ func TestListGroups_Search(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()
 
-	repo := mysqlRepo.NewGroupRepository(db)
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
 	groups, total, err := repo.ListGroups(context.Background(), "001", 1, 10)
 
 	assert.NoError(t, err)
@@ -80,7 +80,7 @@ func TestListGroups_SearchWithSpaceSeparatedTokens(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()
 
-	repo := mysqlRepo.NewGroupRepository(db)
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
 	groups, total, err := repo.ListGroups(context.Background(), "001 Description", 1, 10)
 
 	assert.NoError(t, err)
@@ -93,7 +93,7 @@ func TestListGroups_LastPage(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()
 
-	repo := mysqlRepo.NewGroupRepository(db)
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
 	groups, total, err := repo.ListGroups(context.Background(), "", 3, 10)
 
 	assert.NoError(t, err)
@@ -105,7 +105,7 @@ func TestListGroups_MemberCount(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()
 
-	repo := mysqlRepo.NewGroupRepository(db)
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
 	groups, _, err := repo.ListGroups(context.Background(), "030", 1, 10)
 
 	assert.NoError(t, err)
@@ -127,7 +127,7 @@ func TestListGroups_ExcludesDeleted(t *testing.T) {
 
 	defer db.Exec("DELETE FROM `groups` WHERE id = ?", deletedID) //nolint:errcheck
 
-	repo := mysqlRepo.NewGroupRepository(db)
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
 	_, total, err := repo.ListGroups(context.Background(), "", 1, 100)
 
 	assert.NoError(t, err)
@@ -141,7 +141,7 @@ func TestStore_OK(t *testing.T) {
 	// Use user id=1 (Taro Yamada) as the creator.
 	const creatorID = uint64(1)
 
-	repo := mysqlRepo.NewGroupRepository(db)
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
 	g, err := repo.Store(context.Background(), "New Group", "A new group description", creatorID)
 
 	require.NoError(t, err)
@@ -168,7 +168,7 @@ func TestStore_DBError(t *testing.T) {
 	// Close the DB connection to force an INSERT failure.
 	db.Close()
 
-	repo := mysqlRepo.NewGroupRepository(db)
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
 	g, err := repo.Store(context.Background(), "Should Fail", "desc", uint64(1))
 
 	assert.ErrorIs(t, err, domain.ErrInternalServerError)
@@ -183,7 +183,7 @@ func TestStore_GroupsInsertFailed_FKViolation(t *testing.T) {
 	// fk_groups_updated_by enforces that updated_by must reference users(id).
 	const nonExistentCreatorID = uint64(888888888)
 
-	repo := mysqlRepo.NewGroupRepository(db)
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
 	g, err := repo.Store(context.Background(), "FK Fail Group", "desc", nonExistentCreatorID)
 
 	assert.ErrorIs(t, err, domain.ErrInternalServerError)
@@ -204,7 +204,7 @@ func TestStore_GroupMembersInsertFailed_Rollback(t *testing.T) {
 	// Use a non-existent user id to trigger FK violation on group_members INSERT.
 	const nonExistentUserID = uint64(999999999)
 
-	repo := mysqlRepo.NewGroupRepository(db)
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
 	g, err := repo.Store(context.Background(), "Rollback Group", "desc", nonExistentUserID)
 
 	assert.ErrorIs(t, err, domain.ErrInternalServerError)
@@ -233,8 +233,8 @@ func TestUpdate_OK(t *testing.T) {
 
 	const updaterID = uint64(1)
 
-	repo := mysqlRepo.NewGroupRepository(db)
-	g, err := repo.Update(context.Background(), id, "After Update", "new desc", updaterID)
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
+	g, err := repo.Update(context.Background(), uint64(id), "After Update", "new desc", updaterID) //nolint:gosec
 
 	require.NoError(t, err)
 	assert.Equal(t, uint64(id), g.ID) //nolint:gosec
@@ -258,8 +258,8 @@ func TestUpdate_UpdatedByWritten(t *testing.T) {
 
 	const updaterID = uint64(2)
 
-	repo := mysqlRepo.NewGroupRepository(db)
-	_, err = repo.Update(context.Background(), id, "UpdatedBy Test", "desc", updaterID)
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
+	_, err = repo.Update(context.Background(), uint64(id), "UpdatedBy Test", "desc", updaterID) //nolint:gosec
 	require.NoError(t, err)
 
 	// Verify updated_by was written correctly.
@@ -272,7 +272,7 @@ func TestUpdate_NotFound(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()
 
-	repo := mysqlRepo.NewGroupRepository(db)
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
 	_, err := repo.Update(context.Background(), 999999999, "name", "desc", uint64(1))
 
 	assert.ErrorIs(t, err, domain.ErrNotFound)
@@ -294,8 +294,8 @@ func TestDelete_OK(t *testing.T) {
 
 	const deleterUserID = uint64(99)
 
-	repo := mysqlRepo.NewGroupRepository(db)
-	err = repo.Delete(context.Background(), id, deleterUserID)
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
+	err = repo.Delete(context.Background(), uint64(id), deleterUserID) //nolint:gosec
 
 	require.NoError(t, err)
 
@@ -313,7 +313,7 @@ func TestDelete_NotFound(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()
 
-	repo := mysqlRepo.NewGroupRepository(db)
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
 	err := repo.Delete(context.Background(), 999999999, uint64(1))
 
 	assert.ErrorIs(t, err, domain.ErrNotFound)
@@ -337,8 +337,168 @@ func TestDelete_AlreadyDeleted(t *testing.T) {
 	_, err = db.Exec("UPDATE `groups` SET deleted_at = NOW() WHERE id = ?", id)
 	require.NoError(t, err)
 
-	repo := mysqlRepo.NewGroupRepository(db)
-	err = repo.Delete(context.Background(), id, uint64(1))
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
+	err = repo.Delete(context.Background(), uint64(id), uint64(1)) //nolint:gosec
 
 	assert.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+// TestListChildren_DirectMembersOnly tests that member_count reflects only the child group's
+// direct members when the child group has no descendants.
+// Seed: group 5 -> group 6; group 6 has 1 member (user 3).
+func TestListChildren_DirectMembersOnly(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	const parentGroupID = uint64(5)
+
+	repo := mysqlRepo.NewGroupRelationRepository(db, testLogger())
+	groups, err := repo.ListChildren(context.Background(), parentGroupID)
+
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	assert.Equal(t, uint64(6), groups[0].ID)
+	assert.Equal(t, 1, groups[0].MemberCount)
+}
+
+// TestListChildren_RecursiveMemberCount tests that member_count includes members of descendant
+// groups. A temporary hierarchy is built: parent -> child -> grandchild.
+// child has 1 direct member; grandchild has 2 direct members.
+// Expected member_count for child: 3 (1 + 2).
+func TestListChildren_RecursiveMemberCount(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	// Create parent group.
+	res, err := db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('RC Parent', 'desc', 1)")
+	require.NoError(t, err)
+	parentID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", parentID) //nolint:errcheck
+
+	// Create child group.
+	res, err = db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('RC Child', 'desc', 1)")
+	require.NoError(t, err)
+	childID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", childID) //nolint:errcheck
+
+	// Create grandchild group.
+	res, err = db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('RC Grandchild', 'desc', 1)")
+	require.NoError(t, err)
+	grandchildID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", grandchildID) //nolint:errcheck
+
+	// parent -> child -> grandchild
+	_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?, ?)", parentID, childID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?", parentID, childID) //nolint:errcheck
+
+	_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?, ?)", childID, grandchildID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?", childID, grandchildID) //nolint:errcheck
+
+	// Add 1 direct member to child (user 20).
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?, 20)", childID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ? AND user_id = 20", childID) //nolint:errcheck
+
+	// Add 2 direct members to grandchild (user 21, user 22).
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?, 21)", grandchildID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ? AND user_id = 21", grandchildID) //nolint:errcheck
+
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?, 22)", grandchildID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ? AND user_id = 22", grandchildID) //nolint:errcheck
+
+	repo := mysqlRepo.NewGroupRelationRepository(db, testLogger())
+	groups, err := repo.ListChildren(context.Background(), uint64(parentID)) //nolint:gosec
+
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	assert.Equal(t, uint64(childID), groups[0].ID) //nolint:gosec
+	// child: 1 direct member + 2 grandchild members = 3
+	assert.Equal(t, 3, groups[0].MemberCount)
+}
+
+// TestListChildren_DeduplicatesSharedMembers tests that a user who belongs to both child and
+// grandchild groups is counted only once (DISTINCT).
+func TestListChildren_DeduplicatesSharedMembers(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	// Create parent group.
+	res, err := db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('Dedup Parent', 'desc', 1)")
+	require.NoError(t, err)
+	parentID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", parentID) //nolint:errcheck
+
+	// Create child group.
+	res, err = db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('Dedup Child', 'desc', 1)")
+	require.NoError(t, err)
+	childID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", childID) //nolint:errcheck
+
+	// Create grandchild group.
+	res, err = db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('Dedup Grandchild', 'desc', 1)")
+	require.NoError(t, err)
+	grandchildID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", grandchildID) //nolint:errcheck
+
+	// parent -> child -> grandchild
+	_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?, ?)", parentID, childID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?", parentID, childID) //nolint:errcheck
+
+	_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?, ?)", childID, grandchildID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?", childID, grandchildID) //nolint:errcheck
+
+	// user 20 belongs to both child and grandchild.
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?, 20)", childID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ? AND user_id = 20", childID) //nolint:errcheck
+
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?, 20)", grandchildID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ? AND user_id = 20", grandchildID) //nolint:errcheck
+
+	repo := mysqlRepo.NewGroupRelationRepository(db, testLogger())
+	groups, err := repo.ListChildren(context.Background(), uint64(parentID)) //nolint:gosec
+
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	// user 20 counted only once despite belonging to both groups
+	assert.Equal(t, 1, groups[0].MemberCount)
+}
+
+// TestListChildren_NoChildren tests that an empty slice is returned when the group has no children.
+func TestListChildren_NoChildren(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	// group 1 has no children in the seed data.
+	const parentGroupID = uint64(1)
+
+	repo := mysqlRepo.NewGroupRelationRepository(db, testLogger())
+	groups, err := repo.ListChildren(context.Background(), parentGroupID)
+
+	require.NoError(t, err)
+	assert.Empty(t, groups)
+}
+
+// TestListChildren_DBError tests that ErrInternalServerError is returned on DB failure.
+func TestListChildren_DBError(t *testing.T) {
+	db := testDB(t)
+	db.Close()
+
+	repo := mysqlRepo.NewGroupRelationRepository(db, testLogger())
+	_, err := repo.ListChildren(context.Background(), uint64(1))
+
+	assert.ErrorIs(t, err, domain.ErrInternalServerError)
 }

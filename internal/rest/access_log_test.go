@@ -122,6 +122,116 @@ func TestAccessLogMiddleware_StatusCode(t *testing.T) {
 	assert.Equal(t, float64(http.StatusNotFound), status)
 }
 
+func TestAccessLogMiddleware_5xxUsesErrorLevel(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := newTestLogger(buf)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/30/members", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	user := domain.User{ID: 1, UUID: "test-uuid-1234", FirstName: "Taro", LastName: "Yamada"}
+	c.Set("authUser", user)
+
+	mw := rest.AccessLogMiddleware(logger)
+	handler := mw(func(c echo.Context) error {
+		return c.JSON(http.StatusInternalServerError, rest.ResponseError{Message: "internal server error"})
+	})
+
+	err := handler(c)
+	require.NoError(t, err)
+
+	var logEntry map[string]interface{}
+	require.NoError(t, json.NewDecoder(buf).Decode(&logEntry))
+
+	assert.Equal(t, "ERROR", logEntry["level"])
+	status, ok := logEntry["status"].(float64)
+	assert.True(t, ok)
+	assert.Equal(t, float64(http.StatusInternalServerError), status)
+}
+
+func TestAccessLogMiddleware_5xxWithHandlerError(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := newTestLogger(buf)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/30/members", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	mw := rest.AccessLogMiddleware(logger)
+	handler := mw(func(c echo.Context) error {
+		c.Response().WriteHeader(http.StatusInternalServerError)
+		return domain.ErrInternalServerError
+	})
+
+	_ = handler(c)
+
+	var logEntry map[string]interface{}
+	require.NoError(t, json.NewDecoder(buf).Decode(&logEntry))
+
+	assert.Equal(t, "ERROR", logEntry["level"])
+	assert.Equal(t, domain.ErrInternalServerError.Error(), logEntry["error"])
+}
+
+func TestAccessLogMiddleware_ErrorReturnWithoutWriteHeader(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := newTestLogger(buf)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/30/members", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	mw := rest.AccessLogMiddleware(logger)
+	handler := mw(func(c echo.Context) error {
+		// handler returns error without calling WriteHeader — status remains 0
+		return domain.ErrInternalServerError
+	})
+
+	_ = handler(c)
+
+	var logEntry map[string]interface{}
+	require.NoError(t, json.NewDecoder(buf).Decode(&logEntry))
+
+	// (a) log level must be ERROR
+	assert.Equal(t, "ERROR", logEntry["level"])
+
+	// (b) status field must be 500
+	status, ok := logEntry["status"].(float64)
+	assert.True(t, ok, "status should be a number")
+	assert.Equal(t, float64(http.StatusInternalServerError), status)
+
+	// (c) error field must be present
+	assert.Equal(t, domain.ErrInternalServerError.Error(), logEntry["error"])
+}
+
+func TestAccessLogMiddleware_4xxUsesInfoLevel(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := newTestLogger(buf)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/999", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	mw := rest.AccessLogMiddleware(logger)
+	handler := mw(func(c echo.Context) error {
+		return c.JSON(http.StatusNotFound, rest.ResponseError{Message: "not found"})
+	})
+
+	err := handler(c)
+	require.NoError(t, err)
+
+	var logEntry map[string]interface{}
+	require.NoError(t, json.NewDecoder(buf).Decode(&logEntry))
+
+	assert.Equal(t, "INFO", logEntry["level"])
+	_, hasError := logEntry["error"]
+	assert.False(t, hasError, "error field should not be present for non-5xx responses")
+}
+
 func TestAccessLogMiddleware_AuthorizationHeaderMasked(t *testing.T) {
 	buf := &bytes.Buffer{}
 	logger := newTestLogger(buf)

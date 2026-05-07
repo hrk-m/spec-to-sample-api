@@ -19,16 +19,21 @@ func (m *MockGroupService) ListGroups(ctx context.Context, q string, limit, offs
 	return args.Get(0).([]domain.Group), args.Int(1), args.Error(2)
 }
 
-func (m *MockGroupService) GetByID(ctx context.Context, id uint64) (domain.Group, []domain.Group, error) {
+func (m *MockGroupService) GetByID(ctx context.Context, id uint64) (domain.Group, error) {
 	args := m.Called(ctx, id)
-	groups, _ := args.Get(1).([]domain.Group)
-	return args.Get(0).(domain.Group), groups, args.Error(2)
+	return args.Get(0).(domain.Group), args.Error(1)
 }
 
-func (m *MockGroupService) ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.GroupMember, int, error) {
-	args := m.Called(ctx, id, limit, offset, q)
-	members, _ := args.Get(0).([]domain.GroupMember)
-	return members, args.Int(1), args.Error(2)
+func (m *MockGroupService) ListSubgroups(ctx context.Context, id uint64) ([]domain.Group, error) {
+	args := m.Called(ctx, id)
+	return args.Get(0).([]domain.Group), args.Error(1)
+}
+
+func (m *MockGroupService) ListGroupMembers(
+	ctx context.Context, id uint64, limit, offset int, q string, excludeGroupIDs []uint64,
+) ([]domain.GroupMember, int, int, error) {
+	args := m.Called(ctx, id, limit, offset, q, excludeGroupIDs)
+	return args.Get(0).([]domain.GroupMember), args.Int(1), args.Int(2), args.Error(3)
 }
 
 func (m *MockGroupService) Store(ctx context.Context, name, description string, userID uint64) (domain.Group, error) {
@@ -36,10 +41,9 @@ func (m *MockGroupService) Store(ctx context.Context, name, description string, 
 	return args.Get(0).(domain.Group), args.Error(1)
 }
 
-func (m *MockGroupService) Update(ctx context.Context, id uint64, name, description string, userID uint64) (*domain.Group, error) {
+func (m *MockGroupService) Update(ctx context.Context, id uint64, name, description string, userID uint64) (domain.Group, error) {
 	args := m.Called(ctx, id, name, description, userID)
-	g, _ := args.Get(0).(*domain.Group)
-	return g, args.Error(1)
+	return args.Get(0).(domain.Group), args.Error(1)
 }
 
 func (m *MockGroupService) Delete(ctx context.Context, id uint64, userID uint64) error {

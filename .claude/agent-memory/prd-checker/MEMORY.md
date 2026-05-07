@@ -1,0 +1,1 @@
+- [Project Codebase Patterns](project_patterns.md) — key implementation patterns for sample-api and sample-front

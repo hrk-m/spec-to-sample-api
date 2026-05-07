@@ -34,15 +34,34 @@ func AccessLogMiddleware(logger *slog.Logger) echo.MiddlewareFunc {
 			status := c.Response().Status
 			latencyS := time.Since(start).Seconds()
 
+			// When the handler returns an error without calling WriteHeader, status is 0.
+			// Treat this as an internal server error to ensure correct log level assignment.
+			if nextErr != nil && status == 0 {
+				status = http.StatusInternalServerError
+			}
+
 			maskedHeaders := maskAuthorizationHeader(c.Request().Header)
 
-			logger.Info("access",
+			attrs := []any{
 				"endpoint", endpoint,
 				"login_user", loginUser,
 				"latency_s", latencyS,
 				"status", status,
 				"header", maskedHeaders,
-			)
+			}
+
+			logFn := logger.Info
+			if status >= http.StatusInternalServerError {
+				errorMsg := ""
+				if nextErr != nil {
+					errorMsg = nextErr.Error()
+				}
+
+				attrs = append(attrs, "error", errorMsg)
+				logFn = logger.Error
+			}
+
+			logFn("access", attrs...)
 
 			return nextErr
 		}

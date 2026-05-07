@@ -78,7 +78,7 @@ func TestService_ListUsers_EmptyResult(t *testing.T) {
 	svc := user.NewService(repo)
 
 	repo.On("ListUsers", mock.Anything, "", 500, 0).
-		Return([]domain.User(nil), 0, nil)
+		Return([]domain.User{}, 0, nil)
 
 	result, total, err := svc.ListUsers(context.Background(), "", 500, 0)
 

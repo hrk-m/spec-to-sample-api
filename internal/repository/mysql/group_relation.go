@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 
 	"github.com/go-sql-driver/mysql"
 
@@ -13,12 +14,13 @@ import (
 
 // GroupRelationRepository is a MySQL implementation of group.GroupRelationRepository.
 type GroupRelationRepository struct {
-	db *sql.DB
+	db     *sql.DB
+	logger *slog.Logger
 }
 
 // NewGroupRelationRepository returns a new GroupRelationRepository.
-func NewGroupRelationRepository(db *sql.DB) *GroupRelationRepository {
-	return &GroupRelationRepository{db: db}
+func NewGroupRelationRepository(db *sql.DB, logger *slog.Logger) *GroupRelationRepository {
+	return &GroupRelationRepository{db: db, logger: logger}
 }
 
 // GetAncestorIDs returns all ancestor group IDs of the given group using a recursive CTE.
@@ -37,6 +39,8 @@ SELECT id FROM ancestors`
 
 	rows, err := r.db.QueryContext(ctx, query, groupID)
 	if err != nil {
+		r.logger.ErrorContext(ctx, "GetAncestorIDs query failed", "error", err)
+
 		return nil, domain.ErrInternalServerError
 	}
 	defer func() { _ = rows.Close() }()
@@ -46,6 +50,8 @@ SELECT id FROM ancestors`
 	for rows.Next() {
 		var id uint64
 		if scanErr := rows.Scan(&id); scanErr != nil {
+			r.logger.ErrorContext(ctx, "GetAncestorIDs scan failed", "error", scanErr)
+
 			return nil, domain.ErrInternalServerError
 		}
 
@@ -53,6 +59,8 @@ SELECT id FROM ancestors`
 	}
 
 	if rowsErr := rows.Err(); rowsErr != nil {
+		r.logger.ErrorContext(ctx, "GetAncestorIDs rows error", "error", rowsErr)
+
 		return nil, domain.ErrInternalServerError
 	}
 
@@ -79,6 +87,8 @@ SELECT id FROM descendants`
 
 	rows, err := r.db.QueryContext(ctx, query, groupID)
 	if err != nil {
+		r.logger.ErrorContext(ctx, "GetDescendantIDs query failed", "error", err)
+
 		return nil, domain.ErrInternalServerError
 	}
 	defer func() { _ = rows.Close() }()
@@ -88,6 +98,8 @@ SELECT id FROM descendants`
 	for rows.Next() {
 		var id uint64
 		if scanErr := rows.Scan(&id); scanErr != nil {
+			r.logger.ErrorContext(ctx, "GetDescendantIDs scan failed", "error", scanErr)
+
 			return nil, domain.ErrInternalServerError
 		}
 
@@ -95,6 +107,8 @@ SELECT id FROM descendants`
 	}
 
 	if rowsErr := rows.Err(); rowsErr != nil {
+		r.logger.ErrorContext(ctx, "GetDescendantIDs rows error", "error", rowsErr)
+
 		return nil, domain.ErrInternalServerError
 	}
 
@@ -124,6 +138,8 @@ SELECT COUNT(*) FROM component`
 
 	var count int
 	if err := r.db.QueryRowContext(ctx, query, groupID).Scan(&count); err != nil {
+		r.logger.ErrorContext(ctx, "CountComponentGroups query failed", "error", err)
+
 		return 0, domain.ErrInternalServerError
 	}
 
@@ -160,6 +176,8 @@ SELECT COALESCE(MAX(depth), 1) FROM paths`
 
 	var maxDepth int
 	if err := r.db.QueryRowContext(ctx, query, parentGroupID, childGroupID).Scan(&maxDepth); err != nil {
+		r.logger.ErrorContext(ctx, "MaxDepthInComponent query failed", "error", err)
+
 		return 0, domain.ErrInternalServerError
 	}
 
@@ -167,18 +185,32 @@ SELECT COALESCE(MAX(depth), 1) FROM paths`
 }
 
 // ListChildren returns the direct child groups of the given parent group.
+// member_count includes members of all descendant groups (recursive).
 func (r *GroupRelationRepository) ListChildren(ctx context.Context, parentGroupID uint64) ([]domain.Group, error) {
 	query := `
-SELECT g.id, g.name, g.description, COALESCE(COUNT(gm.id), 0) AS member_count
-FROM group_relations gr
-JOIN ` + "`groups`" + ` g ON gr.child_group_id = g.id
-LEFT JOIN group_members gm ON gm.group_id = g.id
-WHERE gr.parent_group_id = ? AND g.deleted_at IS NULL
+WITH RECURSIVE child_descendants AS (
+  SELECT child_group_id AS root_id, child_group_id AS node_id
+  FROM group_relations
+  WHERE parent_group_id = ?
+  UNION ALL
+  SELECT cd.root_id, gr.child_group_id
+  FROM group_relations gr
+  INNER JOIN child_descendants cd ON gr.parent_group_id = cd.node_id
+)
+SELECT g.id, g.name, g.description,
+       COUNT(DISTINCT gm.user_id) AS member_count
+FROM (SELECT DISTINCT root_id FROM child_descendants) AS direct_children
+JOIN ` + "`groups`" + ` g ON g.id = direct_children.root_id
+LEFT JOIN child_descendants cd ON cd.root_id = direct_children.root_id
+LEFT JOIN group_members gm ON gm.group_id = cd.node_id
+WHERE g.deleted_at IS NULL
 GROUP BY g.id, g.name, g.description
 ORDER BY g.id`
 
 	rows, err := r.db.QueryContext(ctx, query, parentGroupID)
 	if err != nil {
+		r.logger.ErrorContext(ctx, "ListChildren query failed", "error", err)
+
 		return nil, domain.ErrInternalServerError
 	}
 	defer func() { _ = rows.Close() }()
@@ -188,6 +220,8 @@ ORDER BY g.id`
 	for rows.Next() {
 		var g domain.Group
 		if scanErr := rows.Scan(&g.ID, &g.Name, &g.Description, &g.MemberCount); scanErr != nil {
+			r.logger.ErrorContext(ctx, "ListChildren scan failed", "error", scanErr)
+
 			return nil, domain.ErrInternalServerError
 		}
 
@@ -195,6 +229,8 @@ ORDER BY g.id`
 	}
 
 	if rowsErr := rows.Err(); rowsErr != nil {
+		r.logger.ErrorContext(ctx, "ListChildren rows error", "error", rowsErr)
+
 		return nil, domain.ErrInternalServerError
 	}
 
@@ -215,11 +251,15 @@ func (r *GroupRelationRepository) DeleteRelation(ctx context.Context, parentGrou
 		childGroupID,
 	)
 	if err != nil {
+		r.logger.ErrorContext(ctx, "DeleteRelation exec failed", "error", err)
+
 		return domain.ErrInternalServerError
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
+		r.logger.ErrorContext(ctx, "DeleteRelation rows affected failed", "error", err)
+
 		return domain.ErrInternalServerError
 	}
 
@@ -243,6 +283,8 @@ func (r *GroupRelationRepository) CreateRelation(ctx context.Context, parentGrou
 		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
 			return domain.GroupRelation{}, domain.ErrConflict
 		}
+
+		r.logger.ErrorContext(ctx, "CreateRelation exec failed", "error", err)
 
 		return domain.GroupRelation{}, domain.ErrInternalServerError
 	}

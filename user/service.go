@@ -56,9 +56,5 @@ func (s *Service) ListUsers(ctx context.Context, q string, limit, offset int) ([
 		return nil, 0, err
 	}
 
-	if users == nil {
-		users = []domain.User{}
-	}
-
 	return users, total, nil
 }

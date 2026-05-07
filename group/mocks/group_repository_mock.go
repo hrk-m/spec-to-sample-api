@@ -24,10 +24,11 @@ func (m *MockGroupRepository) GetByID(ctx context.Context, id uint64) (domain.Gr
 	return args.Get(0).(domain.Group), args.Error(1)
 }
 
-func (m *MockGroupRepository) ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.GroupMember, int, error) {
-	args := m.Called(ctx, id, limit, offset, q)
-	members, _ := args.Get(0).([]domain.GroupMember)
-	return members, args.Int(1), args.Error(2)
+func (m *MockGroupRepository) ListGroupMembers(
+	ctx context.Context, id uint64, limit, offset int, q string, excludeGroupIDs []uint64,
+) ([]domain.GroupMember, int, int, error) {
+	args := m.Called(ctx, id, limit, offset, q, excludeGroupIDs)
+	return args.Get(0).([]domain.GroupMember), args.Int(1), args.Int(2), args.Error(3)
 }
 
 func (m *MockGroupRepository) Store(ctx context.Context, name, description string, userID uint64) (domain.Group, error) {
@@ -35,10 +36,9 @@ func (m *MockGroupRepository) Store(ctx context.Context, name, description strin
 	return args.Get(0).(domain.Group), args.Error(1)
 }
 
-func (m *MockGroupRepository) Update(ctx context.Context, id uint64, name, description string, userID uint64) (*domain.Group, error) {
+func (m *MockGroupRepository) Update(ctx context.Context, id uint64, name, description string, userID uint64) (domain.Group, error) {
 	args := m.Called(ctx, id, name, description, userID)
-	g, _ := args.Get(0).(*domain.Group)
-	return g, args.Error(1)
+	return args.Get(0).(domain.Group), args.Error(1)
 }
 
 func (m *MockGroupRepository) Delete(ctx context.Context, id uint64, userID uint64) error {

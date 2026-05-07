@@ -3,6 +3,7 @@ package rest
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/hrk-m/spec-to-dev-workflow/sample-api/domain"
 )
@@ -52,4 +53,28 @@ func parsePathID(s string) (uint64, error) {
 	}
 
 	return id, nil
+}
+
+// parseCommaSeparatedUint64 parses a comma-separated string of positive uint64 values.
+// Returns nil when s is empty, and ErrBadParamInput when any value is invalid or zero.
+func parseCommaSeparatedUint64(s string) ([]uint64, error) {
+	if s == "" {
+		return nil, nil
+	}
+
+	parts := strings.Split(s, ",")
+	result := make([]uint64, 0, len(parts))
+
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+
+		v, err := strconv.ParseUint(p, 10, 64)
+		if err != nil || v == 0 {
+			return nil, domain.ErrBadParamInput
+		}
+
+		result = append(result, v)
+	}
+
+	return result, nil
 }

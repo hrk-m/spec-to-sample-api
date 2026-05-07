@@ -1,4 +1,4 @@
-.PHONY: help build run run-local kill test test-verbose lint fix docker-up docker-down db-create db-migrate db-seed db-setup db-reset db-state clean
+.PHONY: help build run run-local kill test test-verbose test-integration lint fix docker-up docker-down db-create db-migrate db-seed db-setup db-reset db-state clean
 
 ENV_FILE ?= .env.local
 
@@ -19,8 +19,9 @@ help:
 	@echo "  build        バイナリをビルド"
 	@echo "  run          ローカル API を起動"
 	@echo "  run-local    ローカル API を起動"
-	@echo "  test         テストを実行"
+	@echo "  test         テストを実行（integration タグ配下のビルド検証も含む）"
 	@echo "  test-verbose テストを詳細出力で実行"
+	@echo "  test-integration integration タグ付きテストを実行（DB 接続が必要）"
 	@echo "  lint         lint を実行"
 	@echo "  fix          lint を実行し自動修正"
 	@echo "  docker-up    ローカル開発用 MySQL コンテナを起動"
@@ -65,9 +66,14 @@ kill:
 
 test:
 	go test ./...
+	go vet -tags integration ./...
 
 test-verbose:
 	go test -v ./...
+	go vet -tags integration ./...
+
+test-integration:
+	go test -tags integration ./...
 
 lint:
 	golangci-lint run ./...

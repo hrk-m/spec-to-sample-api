@@ -95,15 +95,17 @@ func main() {
 
 	rest.RegisterHealthHandler(e, db)
 
-	groupRepo := mysqlRepo.NewGroupRepository(db)
-	userRepo := mysqlRepo.NewUserRepository(db)
-	groupRelationRepo := mysqlRepo.NewGroupRelationRepository(db)
-	gSvc := groupSvc.NewServiceWithRelation(groupRepo, userRepo, groupRelationRepo)
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	groupRepo := mysqlRepo.NewGroupRepository(db, logger)
+	userRepo := mysqlRepo.NewUserRepository(db, logger)
+	groupRelationRepo := mysqlRepo.NewGroupRelationRepository(db, logger)
+	gSvc := groupSvc.NewService(groupRepo, userRepo, groupRelationRepo)
 	uSvc := userSvc.NewService(userRepo)
 
 	apiGroup := e.Group("/api/v1")
+	apiGroup.Use(middleware.Recover())
 	aSvc := authSvc.NewService(userRepo)
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	apiGroup.Use(rest.AuthMiddleware(appEnv, aSvc))
 	apiGroup.Use(rest.AccessLogMiddleware(logger))
 	rest.NewAuthHandler(apiGroup)

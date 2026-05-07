@@ -28,16 +28,19 @@ sample-api/
 │   ├── repository/
 │   │   └── mysql/           # Repository adapter（MySQL 実装）
 │   │       ├── {feature}.go          # group.go, group_relation.go（GroupRelationRepository 実装）, user.go
-│   │       └── {feature}_test.go
+│   │       ├── {feature}_test.go
+│   │       ├── helpers.go            # placeholdersAndArgs（IN 句用プレースホルダ生成）
+│   │       └── helpers_test.go
 │   └── rest/                # Delivery 層（Echo ハンドラ）
 │       ├── {feature}.go       # ハンドラ + インターフェース定義 + ルート登録
 │       ├── {feature}_test.go  # モックを使ったハンドラテスト
-│       ├── errors.go          # エラー → HTTP ステータスコードのマッピング
-│       ├── params.go          # クエリ・パスパラメータの共通パース（parseLimit / parseOffset / parsePathID）
+│       ├── errors.go          # エラー → HTTP ステータスコードのマッピング（respondError / badRequest）
+│       ├── params.go          # クエリ・パスパラメータの共通パース（parseLimit / parseOffset / parsePathID / parseCommaSeparatedUint64）
 │       ├── health.go          # DBPinger インターフェース定義 + /health ハンドラ登録
 │       ├── access_log.go        # AccessLogMiddleware（認証済みリクエストの構造化ログ出力）
 │       ├── access_log_test.go   # AccessLogMiddleware のテスト
-│       ├── auth.go              # AuthHandler + AuthMiddleware + AuthService インターフェース
+│       ├── auth.go              # AuthHandler（GET /me のみ）
+│       ├── auth_middleware.go   # AuthService インターフェース + AuthMiddleware + appEnvDevelopment 定数
 │       ├── auth_test.go         # AuthMiddleware・AuthHandler のテスト
 │       └── mocks/             # テスト用 mock（手動保守）
 │           ├── {feature}_service_mock.go
@@ -73,31 +76,33 @@ sample-api/
 
 ```go
 e := echo.New()
-e.Use(middleware.CORS())           // ミドルウェア登録
+e.Use(middleware.CORS())           // 全ルート共通ミドルウェア
+rest.RegisterHealthHandler(e, db)  // /health は認証なしで登録
 
-// group: repository → service → handler の標準パターン
-// GroupService は GroupRepository / UserRepository / GroupRelationRepository の 3 つを受け取る
-groupRepo := mysql.NewGroupRepository(db)
-userRepo := mysql.NewUserRepository(db)
-groupRelationRepo := mysql.NewGroupRelationRepository(db)
-gSvc := group.NewServiceWithRelation(groupRepo, userRepo, groupRelationRepo)
-
-// user: user 一覧の標準パターン
-uSvc := user.NewService(userRepo)
-
-// auth: 認証ミドルウェア + me エンドポイント
-// /api/v1 以下のルートグループに AuthMiddleware を適用する
-apiGroup := e.Group("/api/v1")
-aSvc := auth.NewService(userRepo)  // userRepo を共有
 logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+// repository: 全 MySQL repo は (db, logger) を受け取る
+groupRepo := mysql.NewGroupRepository(db, logger)
+userRepo := mysql.NewUserRepository(db, logger)
+groupRelationRepo := mysql.NewGroupRelationRepository(db, logger)
+
+// service: group は (repo, userRepo, relationRepo) の 3 引数版に統一
+gSvc := group.NewService(groupRepo, userRepo, groupRelationRepo)
+uSvc := user.NewService(userRepo)
+aSvc := auth.NewService(userRepo)  // userRepo を共有
+
+// /api/v1 配下: Recover → AuthMiddleware → AccessLogMiddleware の順で登録
+apiGroup := e.Group("/api/v1")
+apiGroup.Use(middleware.Recover())
 apiGroup.Use(rest.AuthMiddleware(appEnv, aSvc))
-apiGroup.Use(rest.AccessLogMiddleware(logger))  // AuthMiddleware の後に登録（authUser が設定済みの状態でログ）
-rest.NewAuthHandler(apiGroup)  // AuthHandler は AuthService を保持しない
+apiGroup.Use(rest.AccessLogMiddleware(logger))  // AuthMiddleware の後（authUser がセット済みの状態でログ）
+
+rest.NewAuthHandler(apiGroup)  // AuthHandler は AuthService を保持しない（GET /me のみ）
 rest.NewGroupHandler(apiGroup, gSvc)
 rest.NewUserHandler(apiGroup, uSvc)
 ```
 
-新しいドメインを追加する場合は group パターン（Repository → Service → Handler）を踏襲する。`GroupRelationRepository` のような補助 repository が増えた場合は `NewXxxWithRelation` パターンで追加する。
+新しいドメインを追加する場合は group パターン（Repository → Service → Handler）を踏襲する。MySQL repository は常に `(db, logger)` の 2 引数コンストラクタにし、エラーログは `logger.ErrorContext(ctx, "<method> ...", "error", err)` で記録する。
 
 > **補足**: `mysql.UserRepository` は `group.UserRepository`、`user.UserRepository`、`auth.UserRepository` の 3 つのインターフェースを実装している。複数のサービスから共有されるリポジトリ実装は 1 つのインスタンスを共有して DI する。
 
