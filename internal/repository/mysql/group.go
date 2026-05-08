@@ -279,7 +279,7 @@ SELECT
     us.user_id, us.uuid, us.first_name, us.last_name, us.search_key,
     us.source_groups,
     COUNT(*) OVER() AS total,
-    SUM(JSON_LENGTH(us.source_groups)) OVER() - COUNT(*) OVER() AS duplicate_count
+    SUM(CASE WHEN JSON_LENGTH(us.source_groups) >= 2 THEN 1 ELSE 0 END) OVER() AS duplicate_count
 FROM user_summary us`
 
 	if q != "" {

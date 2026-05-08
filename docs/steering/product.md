@@ -71,7 +71,7 @@
 - `GET /api/v1/groups/:id/members` — 指定グループ（自グループ＋全子孫グループ）のメンバー一覧を返すエンドポイント
   - パスパラメータ: `id`（グループ ID、1 以上の整数）
   - 任意パラメータ: `limit`（取得件数、1-500、デフォルト 500）、`offset`（オフセット、0 以上、デフォルト 0）、`q`（名前検索、`search_key` LIKE）、`exclude_group_ids`（カンマ区切りの `uint64` 配列。指定された直属子グループ経由のメンバーを除外）
-  - レスポンス: メンバー一覧（members）+ 総件数（total）+ 重複カウント（duplicate_count）。各 member オブジェクトは `id, uuid, first_name, last_name` に加え `source_groups`（`[{group_id, group_name}]`）を含む。`source_groups` はそのユーザーが所属する直属の子グループ単位で集約した所属元グループ情報。`duplicate_count` はソース経由の累計所属数（`SUM(JSON_LENGTH(source_groups))`）と一意ユーザー数（`COUNT`）の差で、複数ソースから所属しているユーザーの追加カウントを表す
+  - レスポンス: メンバー一覧（members）+ 総件数（total）+ 重複カウント（duplicate_count）。各 member オブジェクトは `id, uuid, first_name, last_name` に加え `source_groups`（`[{group_id, group_name}]`）を含む。`source_groups` はそのユーザーが所属する直属の子グループ単位で集約した所属元グループ情報。`duplicate_count` は 2 つ以上の group/subgroup に所属しているユニークユーザー数（`SUM(CASE WHEN JSON_LENGTH(source_groups) >= 2 THEN 1 ELSE 0 END) OVER()`）を表す
   - エラー: 不正な ID/パラメータ（`exclude_group_ids` の各値が 0 や非数値）→ 400、グループ未存在 → 404
 
 ### グループ未所属ユーザー一覧取得

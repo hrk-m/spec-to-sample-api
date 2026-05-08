@@ -502,3 +502,338 @@ func TestListChildren_DBError(t *testing.T) {
 
 	assert.ErrorIs(t, err, domain.ErrInternalServerError)
 }
+
+// TestMysqlGroupRepository_ListGroupMembers_DuplicateCount verifies the new duplicate_count
+// semantics: SUM(CASE WHEN JSON_LENGTH(source_groups) >= 2 THEN 1 ELSE 0 END) OVER()
+// i.e. the number of unique users belonging to 2+ groups/subgroups.
+func TestMysqlGroupRepository_ListGroupMembers_DuplicateCount(t *testing.T) {
+	// Base IDs for dynamically created groups in these tests (high range to avoid seed collisions).
+	const baseGroupID = 9000
+
+	tests := []struct {
+		name            string
+		setup           func(t *testing.T, db *sql.DB) (parentID uint64, cleanup func())
+		q               string
+		excludeGroupIDs []uint64
+		wantDuplicate   int
+	}{
+		{
+			name: "T1_everyone_single_group_only",
+			setup: func(t *testing.T, db *sql.DB) (uint64, func()) {
+				t.Helper()
+
+				// Create parent group with 3 direct members (users 1,2,3). No subgroups.
+				res, err := db.Exec("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T1 Parent', 'desc', 1)", baseGroupID+1)
+				require.NoError(t, err)
+				parentID, _ := res.LastInsertId()
+
+				_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1),(?,2),(?,3)", parentID, parentID, parentID)
+				require.NoError(t, err)
+
+				cleanup := func() {
+					db.Exec("DELETE FROM group_members WHERE group_id = ?", parentID)         //nolint:errcheck
+					db.Exec("DELETE FROM `groups` WHERE id = ?", parentID)                    //nolint:errcheck
+				}
+
+				return uint64(parentID), cleanup //nolint:gosec
+			},
+			q:               "",
+			excludeGroupIDs: nil,
+			wantDuplicate:   0,
+		},
+		{
+			name: "T2_one_user_in_parent_and_subgroup",
+			setup: func(t *testing.T, db *sql.DB) (uint64, func()) {
+				t.Helper()
+
+				// parent: user 1 is a direct member.
+				// subA: user 1 and user 2 are members.
+				// → user 1 belongs to parent + subA (2 groups), user 2 belongs to subA only.
+				res, err := db.Exec("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T2 Parent', 'desc', 1)", baseGroupID+10)
+				require.NoError(t, err)
+				parentID, _ := res.LastInsertId()
+
+				res, err = db.Exec("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T2 SubA', 'desc', 1)", baseGroupID+11)
+				require.NoError(t, err)
+				subAID, _ := res.LastInsertId()
+
+				_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?, ?)", parentID, subAID)
+				require.NoError(t, err)
+
+				_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1)", parentID)
+				require.NoError(t, err)
+
+				_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1),(?,2)", subAID, subAID)
+				require.NoError(t, err)
+
+				cleanup := func() {
+					db.Exec("DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?", parentID, subAID) //nolint:errcheck
+					db.Exec("DELETE FROM group_members WHERE group_id IN (?,?)", parentID, subAID)                            //nolint:errcheck
+					db.Exec("DELETE FROM `groups` WHERE id IN (?,?)", parentID, subAID)                                      //nolint:errcheck
+				}
+
+				return uint64(parentID), cleanup //nolint:gosec
+			},
+			q:               "",
+			excludeGroupIDs: nil,
+			wantDuplicate:   1,
+		},
+		{
+			name: "T3_two_users_each_in_multiple_groups",
+			setup: func(t *testing.T, db *sql.DB) (uint64, func()) {
+				t.Helper()
+
+				// parent: user 1. subA: user 1, user 2. subB: user 1, user 2.
+				// → user 1 in parent+subA+subB (3 groups), user 2 in subA+subB (2 groups).
+				res, err := db.Exec("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T3 Parent', 'desc', 1)", baseGroupID+20)
+				require.NoError(t, err)
+				parentID, _ := res.LastInsertId()
+
+				res, err = db.Exec("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T3 SubA', 'desc', 1)", baseGroupID+21)
+				require.NoError(t, err)
+				subAID, _ := res.LastInsertId()
+
+				res, err = db.Exec("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T3 SubB', 'desc', 1)", baseGroupID+22)
+				require.NoError(t, err)
+				subBID, _ := res.LastInsertId()
+
+				_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?,?),(?,?)", parentID, subAID, parentID, subBID)
+				require.NoError(t, err)
+
+				_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1)", parentID)
+				require.NoError(t, err)
+
+				_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1),(?,2)", subAID, subAID)
+				require.NoError(t, err)
+
+				_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1),(?,2)", subBID, subBID)
+				require.NoError(t, err)
+
+				cleanup := func() {
+					db.Exec("DELETE FROM group_relations WHERE parent_group_id = ?", parentID)    //nolint:errcheck
+					db.Exec("DELETE FROM group_members WHERE group_id IN (?,?,?)", parentID, subAID, subBID) //nolint:errcheck
+					db.Exec("DELETE FROM `groups` WHERE id IN (?,?,?)", parentID, subAID, subBID) //nolint:errcheck
+				}
+
+				return uint64(parentID), cleanup //nolint:gosec
+			},
+			q:               "",
+			excludeGroupIDs: nil,
+			wantDuplicate:   2,
+		},
+		{
+			name: "T4_one_user_in_5_subgroups_counts_as_1",
+			setup: func(t *testing.T, db *sql.DB) (uint64, func()) {
+				t.Helper()
+
+				// user 1 in parent+sub1+sub2+sub3+sub4 (5 groups). Should count as 1.
+				res, err := db.Exec("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T4 Parent', 'desc', 1)", baseGroupID+30)
+				require.NoError(t, err)
+				parentID, _ := res.LastInsertId()
+
+				subIDs := make([]int64, 4)
+				for i := range subIDs {
+					res, err = db.Exec(fmt.Sprintf("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T4 Sub%d', 'desc', 1)", i+1), baseGroupID+31+i)
+					require.NoError(t, err)
+					subIDs[i], _ = res.LastInsertId()
+				}
+
+				for _, subID := range subIDs {
+					_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?,?)", parentID, subID)
+					require.NoError(t, err)
+				}
+
+				// user 1 in parent and all 4 subs
+				_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1)", parentID)
+				require.NoError(t, err)
+
+				for _, subID := range subIDs {
+					_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1)", subID)
+					require.NoError(t, err)
+				}
+
+				cleanup := func() {
+					db.Exec("DELETE FROM group_relations WHERE parent_group_id = ?", parentID) //nolint:errcheck
+					allIDs := []int64{int64(parentID)}
+					allIDs = append(allIDs, subIDs...)
+					for _, id := range allIDs {
+						db.Exec("DELETE FROM group_members WHERE group_id = ?", id) //nolint:errcheck
+					}
+					for _, id := range allIDs {
+						db.Exec("DELETE FROM `groups` WHERE id = ?", id) //nolint:errcheck
+					}
+				}
+
+				return uint64(parentID), cleanup //nolint:gosec
+			},
+			q:               "",
+			excludeGroupIDs: nil,
+			wantDuplicate:   1,
+		},
+		{
+			name: "T5_empty_group_returns_0",
+			setup: func(t *testing.T, db *sql.DB) (uint64, func()) {
+				t.Helper()
+
+				// A fresh parent with no members and no subgroups.
+				res, err := db.Exec("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T5 Parent', 'desc', 1)", baseGroupID+40)
+				require.NoError(t, err)
+				parentID, _ := res.LastInsertId()
+
+				cleanup := func() {
+					db.Exec("DELETE FROM `groups` WHERE id = ?", parentID) //nolint:errcheck
+				}
+
+				return uint64(parentID), cleanup //nolint:gosec
+			},
+			q:               "",
+			excludeGroupIDs: nil,
+			wantDuplicate:   0,
+		},
+		{
+			name: "T6_q_removes_duplicate_user",
+			setup: func(t *testing.T, db *sql.DB) (uint64, func()) {
+				t.Helper()
+
+				// user 1 (TaroYamada — duplicate) in parent+subA.
+				// user 2 (HanakoSuzuki — single) in subA only.
+				// q="Suzuki" → only user 2 matches → duplicate_count=0.
+				res, err := db.Exec("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T6 Parent', 'desc', 1)", baseGroupID+50)
+				require.NoError(t, err)
+				parentID, _ := res.LastInsertId()
+
+				res, err = db.Exec("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T6 SubA', 'desc', 1)", baseGroupID+51)
+				require.NoError(t, err)
+				subAID, _ := res.LastInsertId()
+
+				_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?,?)", parentID, subAID)
+				require.NoError(t, err)
+
+				_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1)", parentID)
+				require.NoError(t, err)
+
+				_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1),(?,2)", subAID, subAID)
+				require.NoError(t, err)
+
+				cleanup := func() {
+					db.Exec("DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?", parentID, subAID) //nolint:errcheck
+					db.Exec("DELETE FROM group_members WHERE group_id IN (?,?)", parentID, subAID)                            //nolint:errcheck
+					db.Exec("DELETE FROM `groups` WHERE id IN (?,?)", parentID, subAID)                                      //nolint:errcheck
+				}
+
+				return uint64(parentID), cleanup //nolint:gosec
+			},
+			// user 2's search_key = "HanakoSuzukiSuzukiHanako" → "Suzuki" matches only user 2
+			q:               "Suzuki",
+			excludeGroupIDs: nil,
+			wantDuplicate:   0,
+		},
+		{
+			name: "T7_exclude_reduces_to_1_group",
+			setup: func(t *testing.T, db *sql.DB) (uint64, func()) {
+				t.Helper()
+
+				// user 1 in parent+subA. exclude subA → only parent remains → source_groups len=1.
+				res, err := db.Exec("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T7 Parent', 'desc', 1)", baseGroupID+60)
+				require.NoError(t, err)
+				parentID, _ := res.LastInsertId()
+
+				res, err = db.Exec("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T7 SubA', 'desc', 1)", baseGroupID+61)
+				require.NoError(t, err)
+				subAID, _ := res.LastInsertId()
+
+				_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?,?)", parentID, subAID)
+				require.NoError(t, err)
+
+				_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1)", parentID)
+				require.NoError(t, err)
+
+				_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1)", subAID)
+				require.NoError(t, err)
+
+				cleanup := func() {
+					db.Exec("DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?", parentID, subAID) //nolint:errcheck
+					db.Exec("DELETE FROM group_members WHERE group_id IN (?,?)", parentID, subAID)                            //nolint:errcheck
+					db.Exec("DELETE FROM `groups` WHERE id IN (?,?)", parentID, subAID)                                      //nolint:errcheck
+				}
+
+				return uint64(parentID), cleanup //nolint:gosec
+			},
+			q: "",
+			// excludeGroupIDs is set dynamically in the test loop based on subAID
+			// We use a sentinel 0 and replace it below — handled inline via a wrapper.
+			excludeGroupIDs: nil, // set at test run time
+			wantDuplicate:   0,
+		},
+		{
+			name: "T8_exclude_leaves_2_groups",
+			setup: func(t *testing.T, db *sql.DB) (uint64, func()) {
+				t.Helper()
+
+				// user 1 in parent+subA+subB. exclude subA → parent+subB remain (2 groups).
+				res, err := db.Exec("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T8 Parent', 'desc', 1)", baseGroupID+70)
+				require.NoError(t, err)
+				parentID, _ := res.LastInsertId()
+
+				res, err = db.Exec("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T8 SubA', 'desc', 1)", baseGroupID+71)
+				require.NoError(t, err)
+				subAID, _ := res.LastInsertId()
+
+				res, err = db.Exec("INSERT INTO `groups` (id, name, description, updated_by) VALUES (?, 'T8 SubB', 'desc', 1)", baseGroupID+72)
+				require.NoError(t, err)
+				subBID, _ := res.LastInsertId()
+
+				_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?,?),(?,?)", parentID, subAID, parentID, subBID)
+				require.NoError(t, err)
+
+				_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1)", parentID)
+				require.NoError(t, err)
+
+				_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1)", subAID)
+				require.NoError(t, err)
+
+				_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1)", subBID)
+				require.NoError(t, err)
+
+				cleanup := func() {
+					db.Exec("DELETE FROM group_relations WHERE parent_group_id = ?", parentID)           //nolint:errcheck
+					db.Exec("DELETE FROM group_members WHERE group_id IN (?,?,?)", parentID, subAID, subBID) //nolint:errcheck
+					db.Exec("DELETE FROM `groups` WHERE id IN (?,?,?)", parentID, subAID, subBID)        //nolint:errcheck
+				}
+
+				return uint64(parentID), cleanup //nolint:gosec
+			},
+			q:               "",
+			excludeGroupIDs: nil, // set at test run time
+			wantDuplicate:   1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testDB(t)
+			defer db.Close()
+
+			parentID, cleanup := tc.setup(t, db)
+			defer cleanup()
+
+			excludeIDs := tc.excludeGroupIDs
+
+			// T7: exclude subA (baseGroupID+61)
+			if tc.name == "T7_exclude_reduces_to_1_group" {
+				excludeIDs = []uint64{uint64(baseGroupID + 61)} //nolint:gosec
+			}
+
+			// T8: exclude subA (baseGroupID+71)
+			if tc.name == "T8_exclude_leaves_2_groups" {
+				excludeIDs = []uint64{uint64(baseGroupID + 71)} //nolint:gosec
+			}
+
+			repo := mysqlRepo.NewGroupRepository(db, testLogger())
+			_, _, duplicateCount, err := repo.ListGroupMembers(context.Background(), parentID, 500, 0, tc.q, excludeIDs)
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantDuplicate, duplicateCount, "duplicate_count mismatch for %s", tc.name)
+		})
+	}
+}
