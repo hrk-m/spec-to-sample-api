@@ -60,6 +60,10 @@ func AccessLogMiddleware(logger *slog.Logger) echo.MiddlewareFunc {
 				loginUser = u.UUID
 			}
 
+			requestId := c.Request().Header.Get("X-Request-Id")
+			if requestId != "" {
+				c.Response().Header().Set("X-Request-ID", requestId)
+			}
 			c.Response().Header().Set("X-Login-User", loginUser)
 
 			// Capture request body (restores body for downstream handlers).
@@ -85,6 +89,7 @@ func AccessLogMiddleware(logger *slog.Logger) echo.MiddlewareFunc {
 				"latency_s", latencyS,
 				"status", status,
 				"header", filteredHeaders,
+				"request_id", requestId,
 			}
 
 			// Append request_body if available.

@@ -54,6 +54,9 @@ func TestAccessLogMiddleware_AuthenticatedRequest(t *testing.T) {
 
 	assert.Equal(t, "test-uuid-5678", logEntry["login_user"])
 	assert.Equal(t, "test-uuid-5678", rec.Header().Get("X-Login-User"))
+	// request_id フィールドが常時出力されることを検証（値は "" 許容）
+	_, hasRequestID := logEntry["request_id"]
+	assert.True(t, hasRequestID, "request_id field should always be present in the log")
 }
 
 func TestAccessLogMiddleware_NoAuthUser(t *testing.T) {
@@ -544,6 +547,105 @@ func TestAccessLogMiddleware_RequestBodyCanBeReadByHandler(t *testing.T) {
 	require.True(t, ok, "request_body should be an object")
 	assert.Equal(t, "user@example.com", reqBody["email"])
 	assert.Equal(t, "[REDACTED]", reqBody["password"])
+}
+
+// #12: request_id 取得・記録（X-Request-ID ヘッダーがログ request_id に記録される）
+func TestAccessLogMiddleware_RequestID(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := newTestLogger(buf)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/123", nil)
+	req.Header.Set("X-Request-Id", "req-id-12345")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	mw := rest.AccessLogMiddleware(logger)
+	handler := mw(func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]string{accessLogStatusKey: accessLogStatusOK})
+	})
+
+	err := handler(c)
+	require.NoError(t, err)
+
+	var logEntry map[string]interface{}
+	require.NoError(t, json.NewDecoder(buf).Decode(&logEntry))
+
+	assert.Equal(t, "req-id-12345", logEntry["request_id"])
+}
+
+// #13: request_id 不在（X-Request-ID ヘッダーなし → request_id = "" でログ出力、レスポンスヘッダーに echo されない）
+func TestAccessLogMiddleware_RequestIDAbsent(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := newTestLogger(buf)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/123", nil)
+	// X-Request-ID ヘッダーをセットしない
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	mw := rest.AccessLogMiddleware(logger)
+	handler := mw(func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]string{accessLogStatusKey: accessLogStatusOK})
+	})
+
+	err := handler(c)
+	require.NoError(t, err)
+
+	var logEntry map[string]interface{}
+	require.NoError(t, json.NewDecoder(buf).Decode(&logEntry))
+
+	assert.Equal(t, "", logEntry["request_id"])
+	assert.Equal(t, "", rec.Header().Get("X-Request-ID"))
+}
+
+// #14: request_id レスポンス echo（X-Request-ID をレスポンスヘッダーに echo する）
+func TestAccessLogMiddleware_RequestIDEcho(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := newTestLogger(buf)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/123", nil)
+	req.Header.Set("X-Request-Id", "req-echo-1")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	mw := rest.AccessLogMiddleware(logger)
+	handler := mw(func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]string{accessLogStatusKey: accessLogStatusOK})
+	})
+
+	err := handler(c)
+	require.NoError(t, err)
+
+	assert.Equal(t, "req-echo-1", rec.Header().Get("X-Request-ID"))
+}
+
+// #15: request_id 5xx 経路（ハンドラーが 500 を返す場合も request_id がログに含まれる）
+func TestAccessLogMiddleware_RequestID5xx(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := newTestLogger(buf)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/30/members", nil)
+	req.Header.Set("X-Request-Id", "req-5xx")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	mw := rest.AccessLogMiddleware(logger)
+	handler := mw(func(c echo.Context) error {
+		return c.JSON(http.StatusInternalServerError, rest.ResponseError{Message: "internal server error"})
+	})
+
+	err := handler(c)
+	require.NoError(t, err)
+
+	var logEntry map[string]interface{}
+	require.NoError(t, json.NewDecoder(buf).Decode(&logEntry))
+
+	assert.Equal(t, "ERROR", logEntry["level"])
+	assert.Equal(t, "req-5xx", logEntry["request_id"])
 }
 
 func TestAccessLogMiddleware_AllowListCaseInsensitive(t *testing.T) {
