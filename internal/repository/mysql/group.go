@@ -66,21 +66,60 @@ func (r *GroupRepository) countFilteredGroups(ctx context.Context, q string) (in
 	return total, nil
 }
 
-// selectGroups returns non-deleted groups with member counts, optionally filtered by q.
+// selectGroups returns non-deleted groups with recursive unique member counts, optionally filtered by q.
+// member_count reflects the total number of unique users across the group itself and all its descendant
+// subgroups, matching the semantics of GET /api/v1/groups/:id/members.total (no q / exclude_group_ids).
 func (r *GroupRepository) selectGroups(ctx context.Context, q string, limit, offset int) ([]domain.Group, error) {
-	query := "SELECT g.id, g.name, g.description, COUNT(gm.id) AS member_count" +
-		" FROM `groups` g LEFT JOIN group_members gm ON g.id = gm.group_id" +
-		" WHERE g.deleted_at IS NULL"
+	searchCondition, searchArgs := buildSearchCondition(q)
 
-	searchCondition, args := buildSearchCondition(q)
-	query += searchCondition //nolint:gosec // search condition uses parameterized placeholders
+	// Build the paginated subquery for the target groups.
+	// LIMIT/OFFSET is placed inside the derived table to avoid full-table recursion.
+	// The same search condition and LIMIT/OFFSET args are appended twice: once for
+	// the descendants CTE anchor and once for the outer main group SELECT.
+	innerSelect := "SELECT g.id FROM `groups` g WHERE g.deleted_at IS NULL" +
+		searchCondition + //nolint:gosec // search condition uses parameterized placeholders
+		" ORDER BY g.id DESC LIMIT ? OFFSET ?"
 
-	query += " GROUP BY g.id, g.name, g.description"
-	query += " ORDER BY g.id DESC LIMIT ? OFFSET ?"
+	//nolint:gosec // all variable parts use parameterized placeholders
+	query := `WITH RECURSIVE
+	descendants AS (
+		SELECT mg.id AS root_id, mg.id AS group_id, 0 AS depth
+		FROM (` + innerSelect + `) mg
+		UNION ALL
+		SELECT d.root_id, gr.child_group_id, d.depth + 1
+		FROM descendants d
+		JOIN group_relations gr ON gr.parent_group_id = d.group_id
+		JOIN ` + "`groups`" + ` cg ON cg.id = gr.child_group_id AND cg.deleted_at IS NULL
+	),
+	unique_member_counts AS (
+		SELECT d.root_id, COUNT(DISTINCT gm.user_id) AS member_count
+		FROM descendants d
+		JOIN group_members gm ON gm.group_id = d.group_id
+		GROUP BY d.root_id
+	)
+	SELECT mg.id, mg.name, mg.description, COALESCE(umc.member_count, 0) AS member_count
+	FROM (
+	SELECT g.id, g.name, g.description
+	FROM ` + "`groups`" + ` g
+	WHERE g.deleted_at IS NULL` +
+		searchCondition + //nolint:gosec
+		` ORDER BY g.id DESC LIMIT ? OFFSET ?
+	) mg
+	LEFT JOIN unique_member_counts umc ON umc.root_id = mg.id
+	ORDER BY mg.id DESC`
+
+	// searchArgs appear twice: once for the CTE anchor subquery and once for the outer subquery.
+	// LIMIT/OFFSET also appear twice for the same reason.
+	args := make([]interface{}, 0, len(searchArgs)*2+4)
+	args = append(args, searchArgs...)
+	args = append(args, limit, offset)
+	args = append(args, searchArgs...)
 	args = append(args, limit, offset)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
+		r.logger.ErrorContext(ctx, "selectGroups query failed", "error", err)
+
 		return nil, domain.ErrInternalServerError
 	}
 	defer func() { _ = rows.Close() }()
@@ -90,6 +129,8 @@ func (r *GroupRepository) selectGroups(ctx context.Context, q string, limit, off
 	for rows.Next() {
 		var g domain.Group
 		if scanErr := rows.Scan(&g.ID, &g.Name, &g.Description, &g.MemberCount); scanErr != nil {
+			r.logger.ErrorContext(ctx, "selectGroups scan failed", "error", scanErr)
+
 			return nil, domain.ErrInternalServerError
 		}
 
@@ -97,6 +138,8 @@ func (r *GroupRepository) selectGroups(ctx context.Context, q string, limit, off
 	}
 
 	if rowsErr := rows.Err(); rowsErr != nil {
+		r.logger.ErrorContext(ctx, "selectGroups rows error", "error", rowsErr)
+
 		return nil, domain.ErrInternalServerError
 	}
 

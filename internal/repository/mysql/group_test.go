@@ -503,6 +503,331 @@ func TestListChildren_DBError(t *testing.T) {
 	assert.ErrorIs(t, err, domain.ErrInternalServerError)
 }
 
+// TestSelectGroups_L1 tests that member_count equals 3 when G1 has 3 direct members and no descendants.
+func TestSelectGroups_L1(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	res, err := db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L1 G1', 'desc', 1)")
+	require.NoError(t, err)
+	g1ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g1ID) //nolint:errcheck
+
+	// Add 3 direct members (users 1,2,3) to G1.
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1),(?,2),(?,3)", g1ID, g1ID, g1ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ?", g1ID) //nolint:errcheck
+
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
+	groups, _, err := repo.ListGroups(context.Background(), "L1 G1", 10, 0)
+
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	assert.Equal(t, 3, groups[0].MemberCount)
+}
+
+// TestSelectGroups_L2 tests G1 with 2 direct members and child G2 with 3 members (no overlap).
+// Expected: G1 = 5, G2 = 3.
+func TestSelectGroups_L2(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	res, err := db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L2 G1', 'desc', 1)")
+	require.NoError(t, err)
+	g1ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g1ID) //nolint:errcheck
+
+	res, err = db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L2 G2', 'desc', 1)")
+	require.NoError(t, err)
+	g2ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g2ID) //nolint:errcheck
+
+	_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?,?)", g1ID, g2ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?", g1ID, g2ID) //nolint:errcheck
+
+	// G1: users 1,2 (2 direct members).
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1),(?,2)", g1ID, g1ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ?", g1ID) //nolint:errcheck
+
+	// G2: users 3,4,5 (3 direct members).
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,3),(?,4),(?,5)", g2ID, g2ID, g2ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ?", g2ID) //nolint:errcheck
+
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
+
+	// Check G1 = 5 (2 direct + 3 from G2).
+	g1Groups, _, err := repo.ListGroups(context.Background(), "L2 G1", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, g1Groups, 1)
+	assert.Equal(t, 5, g1Groups[0].MemberCount)
+
+	// Check G2 = 3.
+	g2Groups, _, err := repo.ListGroups(context.Background(), "L2 G2", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, g2Groups, 1)
+	assert.Equal(t, 3, g2Groups[0].MemberCount)
+}
+
+// TestSelectGroups_L3 tests a 3-level hierarchy G1->G2->G3 with 2 members each (no overlap).
+// Expected: G1 = 6, G2 = 4, G3 = 2.
+func TestSelectGroups_L3(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	res, err := db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L3 G1', 'desc', 1)")
+	require.NoError(t, err)
+	g1ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g1ID) //nolint:errcheck
+
+	res, err = db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L3 G2', 'desc', 1)")
+	require.NoError(t, err)
+	g2ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g2ID) //nolint:errcheck
+
+	res, err = db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L3 G3', 'desc', 1)")
+	require.NoError(t, err)
+	g3ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g3ID) //nolint:errcheck
+
+	_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?,?)", g1ID, g2ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?", g1ID, g2ID) //nolint:errcheck
+
+	_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?,?)", g2ID, g3ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?", g2ID, g3ID) //nolint:errcheck
+
+	// G1: users 1,2. G2: users 3,4. G3: users 5,6.
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1),(?,2)", g1ID, g1ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ?", g1ID) //nolint:errcheck
+
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,3),(?,4)", g2ID, g2ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ?", g2ID) //nolint:errcheck
+
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,5),(?,6)", g3ID, g3ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ?", g3ID) //nolint:errcheck
+
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
+
+	// G1 = 6 (users 1,2,3,4,5,6).
+	g1Groups, _, err := repo.ListGroups(context.Background(), "L3 G1", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, g1Groups, 1)
+	assert.Equal(t, 6, g1Groups[0].MemberCount)
+
+	// G2 = 4 (users 3,4,5,6).
+	g2Groups, _, err := repo.ListGroups(context.Background(), "L3 G2", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, g2Groups, 1)
+	assert.Equal(t, 4, g2Groups[0].MemberCount)
+
+	// G3 = 2 (users 5,6).
+	g3Groups, _, err := repo.ListGroups(context.Background(), "L3 G3", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, g3Groups, 1)
+	assert.Equal(t, 2, g3Groups[0].MemberCount)
+}
+
+// TestSelectGroups_L4 tests that a user belonging to both G1 and child G2 is counted once.
+// G1: users A(1),B(2). G2: users A(1),C(3). Expected G1 = 3 (A,B,C unique).
+func TestSelectGroups_L4(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	res, err := db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L4 G1', 'desc', 1)")
+	require.NoError(t, err)
+	g1ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g1ID) //nolint:errcheck
+
+	res, err = db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L4 G2', 'desc', 1)")
+	require.NoError(t, err)
+	g2ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g2ID) //nolint:errcheck
+
+	_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?,?)", g1ID, g2ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?", g1ID, g2ID) //nolint:errcheck
+
+	// G1: user 1 (A), user 2 (B).
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1),(?,2)", g1ID, g1ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ?", g1ID) //nolint:errcheck
+
+	// G2: user 1 (A), user 3 (C).
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1),(?,3)", g2ID, g2ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ?", g2ID) //nolint:errcheck
+
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
+
+	// G1 = 3 (users 1,2,3 unique).
+	g1Groups, _, err := repo.ListGroups(context.Background(), "L4 G1", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, g1Groups, 1)
+	assert.Equal(t, 3, g1Groups[0].MemberCount)
+}
+
+// TestSelectGroups_L5 tests that a group with no members and no descendants returns member_count = 0.
+func TestSelectGroups_L5(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	res, err := db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L5 G1', 'desc', 1)")
+	require.NoError(t, err)
+	g1ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g1ID) //nolint:errcheck
+
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
+	groups, _, err := repo.ListGroups(context.Background(), "L5 G1", 10, 0)
+
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	assert.Equal(t, 0, groups[0].MemberCount)
+}
+
+// TestSelectGroups_L6 tests G1 with 2 direct members and child G2 with no members.
+// Expected: G1 = 2 (child contributes 0 additional members).
+func TestSelectGroups_L6(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	res, err := db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L6 G1', 'desc', 1)")
+	require.NoError(t, err)
+	g1ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g1ID) //nolint:errcheck
+
+	res, err = db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L6 G2', 'desc', 1)")
+	require.NoError(t, err)
+	g2ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g2ID) //nolint:errcheck
+
+	_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?,?)", g1ID, g2ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?", g1ID, g2ID) //nolint:errcheck
+
+	// G1: users 1,2 (2 direct members). G2: no members.
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1),(?,2)", g1ID, g1ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ?", g1ID) //nolint:errcheck
+
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
+	groups, _, err := repo.ListGroups(context.Background(), "L6 G1", 10, 0)
+
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	assert.Equal(t, 2, groups[0].MemberCount)
+}
+
+// TestSelectGroups_L7 tests that q filter is applied correctly while recursive unique count is preserved.
+// G1 (name has "L7") has child G2; G1: users 1,2 / G2: users 3,4,5. Expected G1 = 5.
+func TestSelectGroups_L7(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	res, err := db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L7 G1 unique', 'desc', 1)")
+	require.NoError(t, err)
+	g1ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g1ID) //nolint:errcheck
+
+	res, err = db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L7 G2 child', 'desc', 1)")
+	require.NoError(t, err)
+	g2ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g2ID) //nolint:errcheck
+
+	_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?,?)", g1ID, g2ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?", g1ID, g2ID) //nolint:errcheck
+
+	// G1: users 1,2. G2: users 3,4,5.
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1),(?,2)", g1ID, g1ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ?", g1ID) //nolint:errcheck
+
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,3),(?,4),(?,5)", g2ID, g2ID, g2ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ?", g2ID) //nolint:errcheck
+
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
+
+	// q="L7 G1 unique" filters to G1 only; member_count must include G2's members.
+	groups, _, err := repo.ListGroups(context.Background(), "L7 G1 unique", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	assert.Equal(t, 5, groups[0].MemberCount)
+}
+
+// TestSelectGroups_L8 tests a DAG where G1 and G2 both have G3 as a child.
+// G3 has 2 members (users 1,2). Expected: G1 = 2, G2 = 2 (G3 members counted once each).
+func TestSelectGroups_L8(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	res, err := db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L8 G1', 'desc', 1)")
+	require.NoError(t, err)
+	g1ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g1ID) //nolint:errcheck
+
+	res, err = db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L8 G2', 'desc', 1)")
+	require.NoError(t, err)
+	g2ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g2ID) //nolint:errcheck
+
+	res, err = db.Exec("INSERT INTO `groups` (name, description, updated_by) VALUES ('L8 G3', 'desc', 1)")
+	require.NoError(t, err)
+	g3ID, err := res.LastInsertId()
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM `groups` WHERE id = ?", g3ID) //nolint:errcheck
+
+	// Both G1 and G2 point to G3.
+	_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?,?)", g1ID, g3ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?", g1ID, g3ID) //nolint:errcheck
+
+	_, err = db.Exec("INSERT INTO group_relations (parent_group_id, child_group_id) VALUES (?,?)", g2ID, g3ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?", g2ID, g3ID) //nolint:errcheck
+
+	// G3: users 1,2. G1 and G2 have no direct members.
+	_, err = db.Exec("INSERT INTO group_members (group_id, user_id) VALUES (?,1),(?,2)", g3ID, g3ID)
+	require.NoError(t, err)
+	defer db.Exec("DELETE FROM group_members WHERE group_id = ?", g3ID) //nolint:errcheck
+
+	repo := mysqlRepo.NewGroupRepository(db, testLogger())
+
+	// G1 = 2 (G3's members).
+	g1Groups, _, err := repo.ListGroups(context.Background(), "L8 G1", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, g1Groups, 1)
+	assert.Equal(t, 2, g1Groups[0].MemberCount)
+
+	// G2 = 2 (G3's members, uniquely counted even though G3 is shared).
+	g2Groups, _, err := repo.ListGroups(context.Background(), "L8 G2", 10, 0)
+	require.NoError(t, err)
+	require.Len(t, g2Groups, 1)
+	assert.Equal(t, 2, g2Groups[0].MemberCount)
+}
+
 // TestMysqlGroupRepository_ListGroupMembers_DuplicateCount verifies the new duplicate_count
 // semantics: SUM(CASE WHEN JSON_LENGTH(source_groups) >= 2 THEN 1 ELSE 0 END) OVER()
 // i.e. the number of unique users belonging to 2+ groups/subgroups.
