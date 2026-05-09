@@ -38,10 +38,12 @@ db/seed/                    →  Seed data (DML only)
 ### 認証アーキテクチャ
 
 - `auth/service.go` に `auth.Service` を定義。`UserRepository` インターフェース（`GetByUUID`）を消費する
-- `internal/rest/auth.go` に `AuthService` インターフェース・`AuthHandler`・`AuthMiddleware` を定義
-  - `AuthMiddleware` は `APP_ENV=development` のとき `DEV_USER_UUID` 環境変数から UUID を読み取り、`svc.GetByUUID` でユーザーを取得してコンテキストにセットする
-  - `APP_ENV` が `development` 以外の場合は起動時に `log.Fatal` で終了する（本番向け認証は未実装）
-- `GET /api/v1/me` はコンテキストから `authUser` を取得して返す（`AuthMiddleware` が事前にセット）。`AuthHandler` は `AuthService` を保持せず、`internal/rest/auth.go` の `NewAuthHandler(g *echo.Group)` はルート登録のみを行う
+- `internal/rest/auth.go` には `AuthHandler`（`GetMe` のみ）を定義する。`AuthService` インターフェース・`AuthMiddleware`・`appEnvDevelopment` 定数は `internal/rest/auth_middleware.go` に分離されている
+  - `AuthMiddleware` は `APP_ENV=development` のとき `DEV_USER_UUID` 環境変数から UUID を読み取り、`svc.GetByUUID` でユーザーを取得してコンテキストにセットする（`c.Set("authUser", user)`）
+  - `DEV_USER_UUID` が空の場合は起動時に `log.Fatal` で終了する
+  - `APP_ENV` が `development` 以外の場合は起動時に `log.Fatalf` で終了する（本番向け認証は未実装、TODO で ALB OIDC JWT 検証を想定）
+  - `GetByUUID` がエラーを返した場合は `respondError` 経由で domain エラーを HTTP ステータスコードに変換する
+- `GET /api/v1/me` はコンテキストから `authUser` を取得して返す（`AuthMiddleware` が事前にセット）。`AuthHandler` は `AuthService` を保持せず、`internal/rest/auth.go` の `NewAuthHandler(g *echo.Group)` はルート登録のみを行う。`authUser` がコンテキストに存在しない場合は `domain.ErrUnauthorized` を返す
 - `mysql.UserRepository` は `auth.UserRepository`（`GetByUUID`）も実装する
 
 ### アクセスログ
@@ -54,10 +56,18 @@ db/seed/                    →  Seed data (DML only)
 
 ### エラーハンドリング
 
-- `domain/errors.go` にセンチネルエラーを集約
-- `internal/rest/errors.go` でエラーを HTTP ステータスコードにマッピング（`ErrBadParamInput` → 400、`ErrNotFound` → 404、`ErrConflict` → 409、`ErrInternalServerError` → 500、その他 → 500）
-- ハンドラは `ResponseError{Message}` で JSON エラーレスポンスを返す
-- パスパラメータの ID は `internal/rest/params.go` の `parsePathID`（`strconv.ParseUint` ベース）でパースし、変換失敗または `< 1` の場合は `getStatusCode` を通さず直接 400 を返す。同ファイルに `parseLimit`・`parseOffset` も定義されており、クエリパラメータのパースを共通化している
+- `domain/errors.go` にセンチネルエラーを集約（`ErrInternalServerError` / `ErrNotFound` / `ErrConflict` / `ErrBadParamInput` / `ErrUnauthorized`）
+- `internal/rest/errors.go` でエラーを HTTP ステータスコードにマッピング（`ErrBadParamInput` → 400、`ErrUnauthorized` → 401、`ErrNotFound` → 404、`ErrConflict` → 409、`ErrInternalServerError` → 500、その他 → 500）
+- ハンドラは `ResponseError{Message}` で JSON エラーレスポンスを返す。共通ヘルパーは 2 種類:
+  - `respondError(c, err)` — domain センチネルエラー用。`getStatusCode(err)` で HTTP ステータスを引き、`err.Error()` をメッセージにして返す
+  - `badRequest(c, message)` — `echo.Bind` / `json.Unmarshal` の失敗など、verbatim で渡したいメッセージ付きの 400 用
+- パスパラメータの ID は `internal/rest/params.go` の `parsePathID`（`strconv.ParseUint` ベース）でパースし、変換失敗または `< 1` の場合は直接 `ErrBadParamInput` を返す。同ファイルには `parseLimit`・`parseOffset`・`parseCommaSeparatedUint64`（`exclude_group_ids` 用、各値 0 または非数値で `ErrBadParamInput`）も定義されており、クエリパラメータのパースを共通化している
+- handler 層では `c.Get("authUser").(domain.User)` の型アサーションが失敗した場合は `domain.ErrUnauthorized` を返す（操作者 ID を必要とする `Store` / `Update` / `Delete` / `CreateSubGroup` / `DeleteSubGroup` で使用）
+
+### MySQL repository のヘルパー / logger 注入
+
+- `internal/repository/mysql/helpers.go` に `placeholdersAndArgs(ids []uint64) (string, []any)` を集約。`SQL IN (?,?,…)` 用のプレースホルダ文字列と引数スライスを生成する。`ids` が空の場合は `("", nil)` を返すため、呼び出し側で `IN ()` の禁則ガードが必要
+- `mysql.GroupRepository` / `mysql.UserRepository` / `mysql.GroupRelationRepository` のコンストラクタ（`NewXxx(db *sql.DB, logger *slog.Logger)`）は第 2 引数で `*slog.Logger` を受け取る。query / scan / rows のエラーは `logger.ErrorContext(ctx, "<method> ...", "error", err)` で記録してから `domain.ErrInternalServerError` を返す（`sql.ErrNoRows` は記録せず `ErrNotFound` にマップする）
 
 ## コーディング規約
 
@@ -84,10 +94,11 @@ db/seed/                    →  Seed data (DML only)
 // GroupService: internal/rest/group.go で宣言
 type GroupService interface {
     ListGroups(ctx context.Context, q string, limit, offset int) ([]domain.Group, int, error)
-    GetByID(ctx context.Context, id uint64) (domain.Group, []domain.Group, error)
-    ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.GroupMember, int, error)
+    GetByID(ctx context.Context, id uint64) (domain.Group, error)
+    ListSubgroups(ctx context.Context, id uint64) ([]domain.Group, error)
+    ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string, excludeGroupIDs []uint64) ([]domain.GroupMember, int, int, error)
     Store(ctx context.Context, name, description string, userID uint64) (domain.Group, error)
-    Update(ctx context.Context, id uint64, name, description string, userID uint64) (*domain.Group, error)
+    Update(ctx context.Context, id uint64, name, description string, userID uint64) (domain.Group, error)
     Delete(ctx context.Context, id uint64, userID uint64) error
     ListNonGroupMembers(ctx context.Context, groupID uint64, limit, offset int, q string) ([]domain.User, int, error)
     AddGroupMembers(ctx context.Context, groupID uint64, userIDs []uint64) ([]domain.User, error)
@@ -108,11 +119,15 @@ type AuthService interface {
 }
 ```
 
-`Update` は ID（`uint64`）・name・description・`userID`（操作者の `domain.User.ID`）を受け取り、更新後の `*domain.Group` を返す。`Delete` は ID（`uint64`）と `userID` を受け取り、soft delete を実行する（成功時は `nil`、対象未存在時は `ErrNotFound`）。`userID` は `groups.updated_by` カラムに記録される（`20260417130000_add_updated_by_to_groups.up.sql` で追加）。
+`Update` は ID（`uint64`）・name・description・`userID`（操作者の `domain.User.ID`）を受け取り、更新後の `domain.Group`（値型）を返す。`Delete` は ID（`uint64`）と `userID` を受け取り、soft delete を実行する（成功時は `nil`、対象未存在時は `ErrNotFound`）。`userID` は `groups.updated_by` カラムに記録される（`20260417130000_add_updated_by_to_groups.up.sql` で追加）。
 
-`GetByID` は `(domain.Group, []domain.Group, error)` を返す。第 2 戻り値は直属の子グループ一覧（`subgroups`）で、`GroupRelationRepository.ListChildren` から取得する。`relationRepo` が nil の場合（`NewService` で生成した場合）は空スライスを返す。通常は `NewServiceWithRelation` で生成してリレーション機能を有効にする。
+`group.NewService(repo, userRepo, relationRepo)` の 3 引数版に統一されている（`NewServiceWithRelation` は廃止）。`relationRepo` は必須で、サブグループ機能（`ListSubgroups` / `CreateSubGroup` / `DeleteSubGroup`）を提供する。
+
+`GetByID` は単一の `domain.Group` のみを返す（子グループは含めない）。直属の子グループ取得は別メソッド `ListSubgroups(ctx, id) ([]domain.Group, error)` で行い、内部で `GroupRelationRepository.ListChildren` を呼ぶ。`GET /api/v1/groups/:id` の handler では `GetByID` と `ListSubgroups` の両方を呼び、結果を `getGroupResponse{Subgroups: []subgroupSummary}` に詰めて返す。
 
 `Update` および `Delete` は、`GetByID` や `ListGroupMembers` と同様に、service 層で `id < minID`（`minID = 1`）のバリデーションを行い、不正な ID には `ErrBadParamInput` を返す（repository は呼び出さない）。`userID` は handler 層でコンテキストから取得した `authUser.ID` を渡す。
+
+`ListGroupMembers` は service 層で `id < minID` と `limit < minMemberLimit || limit > maxMemberLimit` をバリデーションし、グループ存在確認後に repository に委譲する。戻り値は `(members, total, duplicateCount, error)` の 4 つで、`duplicateCount` は repository 層の SQL 内で `SUM(CASE WHEN JSON_LENGTH(source_groups) >= 2 THEN 1 ELSE 0 END) OVER()` として算出される（2 つ以上の group/subgroup に所属しているユニークユーザー数）。`excludeGroupIDs []uint64` を渡すと repository 層の WITH RECURSIVE CTE 内 `WHERE d.root_child_id NOT IN (...)` で直属子グループ単位で除外される（空スライスのときは絞り込みを行わない。MySQL は `NOT IN ()` を許容しないためガードが必須）。
 
 `ListNonGroupMembers` は `groupID` の存在確認を service 層で行い（`GetByID` 経由）、存在しない場合は `ErrNotFound` を返す。
 
@@ -133,9 +148,9 @@ type AuthService interface {
 type GroupRepository interface {
     ListGroups(ctx context.Context, q string, limit, offset int) ([]domain.Group, int, error)
     GetByID(ctx context.Context, id uint64) (domain.Group, error)
-    ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.GroupMember, int, error)
+    ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string, excludeGroupIDs []uint64) ([]domain.GroupMember, int, int, error)
     Store(ctx context.Context, name, description string, userID uint64) (domain.Group, error)
-    Update(ctx context.Context, id uint64, name, description string, userID uint64) (*domain.Group, error)
+    Update(ctx context.Context, id uint64, name, description string, userID uint64) (domain.Group, error)
     Delete(ctx context.Context, id uint64, userID uint64) error
     ListNonGroupMembers(ctx context.Context, groupID uint64, limit, offset int, q string) ([]domain.User, int, error)
     AddGroupMembers(ctx context.Context, groupID uint64, userIDs []uint64) ([]domain.User, error)
@@ -171,7 +186,7 @@ type UserRepository interface {
 }
 ```
 
-`Update` は DB の `groups` テーブルを `UPDATE groups SET name = ?, description = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL` で更新し、`RowsAffected() == 0` なら `ErrNotFound` を返す。更新後に `GetByID` で最新状態を取得して返す。`Delete` は `UPDATE groups SET deleted_at = NOW(), updated_by = ? WHERE id = ? AND deleted_at IS NULL` で soft delete し、`RowsAffected() == 0` なら `ErrNotFound` を返す。
+`Update` は DB の `groups` テーブルを `UPDATE groups SET name = ?, description = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL` で更新し、`RowsAffected() == 0` なら `ErrNotFound` を返す。更新後に `GetByID` で最新状態を取得して返す（戻り値は `domain.Group` の値型）。`Delete` は `UPDATE groups SET deleted_at = NOW(), updated_by = ? WHERE id = ? AND deleted_at IS NULL` で soft delete し、`RowsAffected() == 0` なら `ErrNotFound` を返す。
 
 `ListNonGroupMembers` は `users` テーブルから `group_members` に存在しないユーザーを返す。total は `q` フィルタ込みの非メンバー数（`q` が空の場合は全非メンバー数と一致する）。名前検索は `users.search_key` カラムへの LIKE 検索で行う。`search_key` は `CONCAT(first_name, last_name, last_name, first_name)` を値とする VIRTUAL GENERATED カラムで、`db/migrate/20260411120000_add_search_key_to_users.up.sql` で追加された。
 
@@ -179,10 +194,10 @@ type UserRepository interface {
 
 `AddGroupMembers` はトランザクション内で `group_members` へ一括 INSERT する。INSERT 前に重複チェックを行い、既存メンバーが含まれる場合は `ErrConflict` を返す。成功後は追加したユーザーを `users` テーブルから SELECT して返す（`id, uuid, first_name, last_name` の全フィールドを SELECT する）。
 
-`ListGroupMembers` は `domain.GroupMember` を返す。`GroupMember` は `id, uuid, first_name, last_name` に加え、`SourceGroups`（`[]domain.SourceGroup`）フィールドを持つ。`SourceGroup` は `GroupID` と `GroupName` を持ち、そのメンバーが所属する直属グループ（ルートの子グループ単位で集約）の情報を表す。MySQL の WITH RECURSIVE CTE で自グループと全子孫グループのメンバーを収集し、`JSON_ARRAYAGG` で各ユーザーの所属元グループをまとめて取得する。名前検索に使う `search_key` は repository 内部のローカル変数にスキャンし、`domain.GroupMember` には含まれない。`ListNonGroupMembers`・`AddGroupMembers` は `id, uuid, first_name, last_name` の全フィールドを SELECT する。`ListUsers` も同様に全フィールドを SELECT する。
+`ListGroupMembers` は `domain.GroupMember` を返す。`GroupMember` は `id, uuid, first_name, last_name` に加え、`SourceGroups`（`[]domain.SourceGroup`）フィールドを持つ。`SourceGroup` は `GroupID` と `GroupName` を持ち、そのメンバーが所属する直属グループ（ルートの子グループ単位で集約）の情報を表す。MySQL の WITH RECURSIVE CTE で自グループと全子孫グループのメンバーを収集し（`root_child_id` で直属子グループへの集約キーを保持）、`JSON_ARRAYAGG` で各ユーザーの所属元グループをまとめて取得する。`excludeGroupIDs` が非空の場合は `user_sources` CTE 内で `WHERE d.root_child_id NOT IN (...)` で除外する（`placeholdersAndArgs` でプレースホルダ生成）。最終 SELECT では `COUNT(*) OVER()` で `total`、`SUM(CASE WHEN JSON_LENGTH(source_groups) >= 2 THEN 1 ELSE 0 END) OVER()` で `duplicate_count` をウィンドウ関数で同時に取得する（`duplicate_count` は 2 つ以上の source_group を持つユーザー数）。名前検索に使う `search_key` は repository 内部のローカル変数にスキャンし、`domain.GroupMember` には含まれない。`ListNonGroupMembers`・`AddGroupMembers` は `id, uuid, first_name, last_name` の全フィールドを SELECT する。`ListUsers` も同様に全フィールドを SELECT する。
 
 `RemoveGroupMembers` は service 層でグループ存在確認を行い（`GetByID` 経由）、repository 層でトランザクション内に `DELETE FROM group_members WHERE group_id = ? AND user_id IN (?)` を実行する。`RowsAffected()` が `len(userIDs)` と一致しない場合（非メンバーが含まれる）は `ErrNotFound` を返してロールバックする。handler 層で `user_ids` の空チェック（`len == 0` → 400）を行う。成功時は `204 No Content` を返す。
 
-> **補足**: `mysql.UserRepository` は `group.UserRepository`（`CountByIDs`）、`user.UserRepository`（`ListUsers`・`GetByID`）、`auth.UserRepository`（`GetByUUID`）の 3 つのインターフェースを実装する単一の struct。`GetByID` は `user.UserRepository` インターフェースの一部として `GET /api/v1/users/:id` のユーザー単件取得に使用される。`app/main.go` で `mysqlRepo.NewUserRepository(db)` で 1 インスタンスを生成し、`group.NewServiceWithRelation`・`user.NewService`・`auth.NewService` の 3 つに渡す。
+> **補足**: `mysql.UserRepository` は `group.UserRepository`（`CountByIDs`）、`user.UserRepository`（`ListUsers`・`GetByID`）、`auth.UserRepository`（`GetByUUID`）の 3 つのインターフェースを実装する単一の struct。`GetByID` は `user.UserRepository` インターフェースの一部として `GET /api/v1/users/:id` のユーザー単件取得に使用される。`app/main.go` で `mysqlRepo.NewUserRepository(db, logger)` で 1 インスタンスを生成し、`group.NewService`（`groupRepo, userRepo, groupRelationRepo` の 3 引数）・`user.NewService`・`auth.NewService` の 3 つに渡す。
 
 `GroupRelationRepository` の各メソッドは WITH RECURSIVE CTE を使用する。`GetAncestorIDs` / `GetDescendantIDs` は有向グラフを再帰的に辿り祖先・子孫の ID を返す。`CountComponentGroups` は無向グラフとして辿り連結成分内のノード数を返す。`MaxDepthInComponent` は仮想エッジを追加した状態でルートから葉までの最大ノード数を返す。`ListChildren` は直属の子グループを `groups` テーブルから JOIN して返す。`CreateRelation` は UNIQUE 制約違反（エラーコード 1062）を `ErrConflict` にマッピングする。`DeleteRelation` は `DELETE FROM group_relations WHERE parent_group_id = ? AND child_group_id = ?` を実行し、`RowsAffected() == 0` の場合は `ErrNotFound` を返す。

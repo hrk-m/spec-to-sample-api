@@ -15,6 +15,8 @@ import (
 	"github.com/hrk-m/spec-to-dev-workflow/sample-api/internal/rest/mocks"
 )
 
+const testUserUUID1 = "550e8400-e29b-41d4-a716-446655440001"
+
 func TestUserHandler_ListUsers_OK(t *testing.T) {
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/users?limit=500&offset=0", nil)
@@ -24,7 +26,7 @@ func TestUserHandler_ListUsers_OK(t *testing.T) {
 
 	svc := new(mocks.MockUserService)
 	users := []domain.User{
-		{ID: 1, UUID: "550e8400-e29b-41d4-a716-446655440001", FirstName: "Taro", LastName: "Yamada"},
+		{ID: 1, UUID: testUserUUID1, FirstName: testFirstNameTaro, LastName: testLastNameYamada},
 	}
 	svc.On("ListUsers", mock.Anything, "", 500, 0).Return(users, 15, nil)
 
@@ -117,7 +119,7 @@ func TestUserHandler_ListUsers_PaginationParams(t *testing.T) {
 
 	svc := new(mocks.MockUserService)
 	users := []domain.User{
-		{ID: 21, UUID: "550e8400-e29b-41d4-a716-446655440003", FirstName: "Jiro", LastName: "Tanaka"},
+		{ID: 21, UUID: "550e8400-e29b-41d4-a716-446655440003", FirstName: testFirstNameJiro, LastName: testLastNameTanaka},
 	}
 	svc.On("ListUsers", mock.Anything, "", 10, 20).Return(users, 30, nil)
 
@@ -235,7 +237,7 @@ func TestUserHandler_GetUser_OK(t *testing.T) {
 	c.SetParamValues("1")
 
 	svc := new(mocks.MockUserService)
-	user := &domain.User{ID: 1, UUID: "550e8400-e29b-41d4-a716-446655440001", FirstName: "Taro", LastName: "Yamada"}
+	user := &domain.User{ID: 1, UUID: testUserUUID1, FirstName: testFirstNameTaro, LastName: testLastNameYamada}
 	svc.On("GetUser", mock.Anything, uint64(1)).Return(user, nil)
 
 	h := &rest.UserHandler{Service: svc}
@@ -247,9 +249,9 @@ func TestUserHandler_GetUser_OK(t *testing.T) {
 	var result domain.User
 	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
 	assert.Equal(t, uint64(1), result.ID)
-	assert.Equal(t, "550e8400-e29b-41d4-a716-446655440001", result.UUID)
-	assert.Equal(t, "Taro", result.FirstName)
-	assert.Equal(t, "Yamada", result.LastName)
+	assert.Equal(t, testUserUUID1, result.UUID)
+	assert.Equal(t, testFirstNameTaro, result.FirstName)
+	assert.Equal(t, testLastNameYamada, result.LastName)
 	svc.AssertExpectations(t)
 }
 

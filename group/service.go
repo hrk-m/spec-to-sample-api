@@ -27,9 +27,9 @@ const (
 type GroupRepository interface {
 	ListGroups(ctx context.Context, q string, limit, offset int) ([]domain.Group, int, error)
 	GetByID(ctx context.Context, id uint64) (domain.Group, error)
-	ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.GroupMember, int, error)
+	ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string, excludeGroupIDs []uint64) ([]domain.GroupMember, int, int, error)
 	Store(ctx context.Context, name, description string, userID uint64) (domain.Group, error)
-	Update(ctx context.Context, id uint64, name, description string, userID uint64) (*domain.Group, error)
+	Update(ctx context.Context, id uint64, name, description string, userID uint64) (domain.Group, error)
 	Delete(ctx context.Context, id uint64, userID uint64) error
 	ListNonGroupMembers(ctx context.Context, groupID uint64, limit, offset int, q string) ([]domain.User, int, error)
 	AddGroupMembers(ctx context.Context, groupID uint64, userIDs []uint64) ([]domain.User, error)
@@ -54,72 +54,59 @@ type GroupRelationRepository interface {
 
 // Service handles group business logic.
 type Service struct {
-	repo        GroupRepository
-	userRepo    UserRepository
+	repo         GroupRepository
+	userRepo     UserRepository
 	relationRepo GroupRelationRepository
 }
 
 // NewService returns a new Service instance.
-func NewService(repo GroupRepository, userRepo UserRepository) *Service {
-	return &Service{repo: repo, userRepo: userRepo}
-}
-
-// NewServiceWithRelation returns a new Service instance with a GroupRelationRepository.
-func NewServiceWithRelation(repo GroupRepository, userRepo UserRepository, relationRepo GroupRelationRepository) *Service {
+func NewService(repo GroupRepository, userRepo UserRepository, relationRepo GroupRelationRepository) *Service {
 	return &Service{repo: repo, userRepo: userRepo, relationRepo: relationRepo}
 }
 
-// GetByID returns a group by its ID along with its direct child subgroups.
-func (s *Service) GetByID(ctx context.Context, id uint64) (domain.Group, []domain.Group, error) {
+// GetByID returns a group by its ID.
+func (s *Service) GetByID(ctx context.Context, id uint64) (domain.Group, error) {
 	if id < minID {
-		return domain.Group{}, nil, domain.ErrBadParamInput
+		return domain.Group{}, domain.ErrBadParamInput
 	}
 
-	grp, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return domain.Group{}, nil, err
+	return s.repo.GetByID(ctx, id)
+}
+
+// ListSubgroups returns the direct child subgroups of the given group.
+// Callers must verify the parent's existence beforehand (e.g. via GetByID);
+// for a non-existent or deleted parent this method returns an empty slice.
+func (s *Service) ListSubgroups(ctx context.Context, id uint64) ([]domain.Group, error) {
+	if id < minID {
+		return nil, domain.ErrBadParamInput
 	}
 
-	if s.relationRepo == nil {
-		return grp, []domain.Group{}, nil
-	}
-
-	children, err := s.relationRepo.ListChildren(ctx, id)
-	if err != nil {
-		return domain.Group{}, nil, domain.ErrInternalServerError
-	}
-
-	if children == nil {
-		children = []domain.Group{}
-	}
-
-	return grp, children, nil
+	return s.relationRepo.ListChildren(ctx, id)
 }
 
 // ListGroupMembers returns a paginated list of members for a group including all descendants.
-func (s *Service) ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.GroupMember, int, error) {
+// excludeGroupIDs optionally filters out members whose direct source group is in the given list.
+func (s *Service) ListGroupMembers(
+	ctx context.Context, id uint64, limit, offset int, q string, excludeGroupIDs []uint64,
+) ([]domain.GroupMember, int, int, error) {
 	if id < minID {
-		return nil, 0, domain.ErrBadParamInput
+		return nil, 0, 0, domain.ErrBadParamInput
 	}
 	if limit < minMemberLimit || limit > maxMemberLimit {
-		return nil, 0, domain.ErrBadParamInput
+		return nil, 0, 0, domain.ErrBadParamInput
 	}
 
 	// Check group existence first.
 	if _, err := s.repo.GetByID(ctx, id); err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 
-	members, total, err := s.repo.ListGroupMembers(ctx, id, limit, offset, q)
+	members, total, duplicateCount, err := s.repo.ListGroupMembers(ctx, id, limit, offset, q, excludeGroupIDs)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 
-	if members == nil {
-		members = []domain.GroupMember{}
-	}
-
-	return members, total, nil
+	return members, total, duplicateCount, nil
 }
 
 // Store creates a new group after validating the name.
@@ -133,14 +120,14 @@ func (s *Service) Store(ctx context.Context, name, description string, userID ui
 }
 
 // Update updates a group's name and description by ID.
-func (s *Service) Update(ctx context.Context, id uint64, name, description string, userID uint64) (*domain.Group, error) {
+func (s *Service) Update(ctx context.Context, id uint64, name, description string, userID uint64) (domain.Group, error) {
 	if id < minID {
-		return nil, domain.ErrBadParamInput
+		return domain.Group{}, domain.ErrBadParamInput
 	}
 
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > maxNameLength {
-		return nil, domain.ErrBadParamInput
+		return domain.Group{}, domain.ErrBadParamInput
 	}
 
 	return s.repo.Update(ctx, id, name, description, userID)
@@ -186,10 +173,6 @@ func (s *Service) ListNonGroupMembers(ctx context.Context, groupID uint64, limit
 		return nil, 0, err
 	}
 
-	if users == nil {
-		users = []domain.User{}
-	}
-
 	return users, total, nil
 }
 
@@ -231,7 +214,7 @@ func (s *Service) RemoveGroupMembers(ctx context.Context, groupID uint64, userID
 
 // CreateSubGroup adds child as a subgroup of parent after validating constraints.
 func (s *Service) CreateSubGroup(ctx context.Context, parentGroupID, childGroupID uint64) (domain.GroupRelation, error) {
-	if childGroupID < minID {
+	if parentGroupID < minID || childGroupID < minID {
 		return domain.GroupRelation{}, domain.ErrBadParamInput
 	}
 
@@ -298,6 +281,14 @@ func (s *Service) CreateSubGroup(ctx context.Context, parentGroupID, childGroupI
 
 // DeleteSubGroup removes the parent-child relation between the given groups.
 func (s *Service) DeleteSubGroup(ctx context.Context, parentGroupID, childGroupID uint64) error {
+	if parentGroupID < minID || childGroupID < minID {
+		return domain.ErrBadParamInput
+	}
+
+	if parentGroupID == childGroupID {
+		return domain.ErrBadParamInput
+	}
+
 	return s.relationRepo.DeleteRelation(ctx, parentGroupID, childGroupID)
 }
 

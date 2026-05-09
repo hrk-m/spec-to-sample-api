@@ -13,10 +13,11 @@ import (
 // GroupService defines the interface for the group use case.
 type GroupService interface {
 	ListGroups(ctx context.Context, q string, limit, offset int) ([]domain.Group, int, error)
-	GetByID(ctx context.Context, id uint64) (domain.Group, []domain.Group, error)
-	ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.GroupMember, int, error)
+	GetByID(ctx context.Context, id uint64) (domain.Group, error)
+	ListSubgroups(ctx context.Context, id uint64) ([]domain.Group, error)
+	ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string, excludeGroupIDs []uint64) ([]domain.GroupMember, int, int, error)
 	Store(ctx context.Context, name, description string, userID uint64) (domain.Group, error)
-	Update(ctx context.Context, id uint64, name, description string, userID uint64) (*domain.Group, error)
+	Update(ctx context.Context, id uint64, name, description string, userID uint64) (domain.Group, error)
 	Delete(ctx context.Context, id uint64, userID uint64) error
 	ListNonGroupMembers(ctx context.Context, groupID uint64, limit, offset int, q string) ([]domain.User, int, error)
 	AddGroupMembers(ctx context.Context, groupID uint64, userIDs []uint64) ([]domain.User, error)
@@ -65,8 +66,9 @@ type groupMember struct {
 }
 
 type groupMemberListResponse struct {
-	Members []groupMember `json:"members"`
-	Total   int           `json:"total"`
+	Members        []groupMember `json:"members"`
+	Total          int           `json:"total"`
+	DuplicateCount int           `json:"duplicate_count"`
 }
 
 type storeGroupRequest struct {
@@ -121,17 +123,17 @@ func (h *GroupHandler) Store(c echo.Context) error {
 
 	var req storeGroupRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: err.Error()})
+		return badRequest(c, err.Error())
 	}
 
 	authUser, ok := c.Get("authUser").(domain.User)
 	if !ok {
-		return c.JSON(http.StatusUnauthorized, ResponseError{Message: "Unauthorized"})
+		return respondError(c, domain.ErrUnauthorized)
 	}
 
 	result, err := h.Service.Store(ctx, req.Name, req.Description, authUser.ID)
 	if err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return respondError(c, err)
 	}
 
 	return c.JSON(http.StatusCreated, result)
@@ -143,22 +145,22 @@ func (h *GroupHandler) Update(c echo.Context) error {
 
 	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	var req updateGroupRequest
 	if bindErr := c.Bind(&req); bindErr != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: bindErr.Error()})
+		return badRequest(c, bindErr.Error())
 	}
 
 	authUser, ok := c.Get("authUser").(domain.User)
 	if !ok {
-		return c.JSON(http.StatusUnauthorized, ResponseError{Message: "Unauthorized"})
+		return respondError(c, domain.ErrUnauthorized)
 	}
 
 	result, err := h.Service.Update(ctx, id, req.Name, req.Description, authUser.ID)
 	if err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return respondError(c, err)
 	}
 
 	return c.JSON(http.StatusOK, result)
@@ -170,16 +172,16 @@ func (h *GroupHandler) Delete(c echo.Context) error {
 
 	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	authUser, ok := c.Get("authUser").(domain.User)
 	if !ok {
-		return c.JSON(http.StatusUnauthorized, ResponseError{Message: "Unauthorized"})
+		return respondError(c, domain.ErrUnauthorized)
 	}
 
 	if err := h.Service.Delete(ctx, id, authUser.ID); err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return respondError(c, err)
 	}
 
 	return c.NoContent(http.StatusNoContent)
@@ -191,12 +193,17 @@ func (h *GroupHandler) GetByID(c echo.Context) error {
 
 	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
-	grp, children, err := h.Service.GetByID(ctx, id)
+	grp, err := h.Service.GetByID(ctx, id)
 	if err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return respondError(c, err)
+	}
+
+	children, err := h.Service.ListSubgroups(ctx, id)
+	if err != nil {
+		return respondError(c, err)
 	}
 
 	subs := make([]subgroupSummary, 0, len(children))
@@ -224,24 +231,29 @@ func (h *GroupHandler) ListGroupMembers(c echo.Context) error {
 
 	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	limit, limitErr := parseLimit(c.QueryParam("limit"))
 	if limitErr != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	offset, offsetErr := parseOffset(c.QueryParam("offset"))
 	if offsetErr != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	q := c.QueryParam("q")
 
-	members, total, err := h.Service.ListGroupMembers(ctx, id, limit, offset, q)
+	excludeGroupIDs, excludeErr := parseCommaSeparatedUint64(c.QueryParam("exclude_group_ids"))
+	if excludeErr != nil {
+		return respondError(c, domain.ErrBadParamInput)
+	}
+
+	members, total, duplicateCount, err := h.Service.ListGroupMembers(ctx, id, limit, offset, q, excludeGroupIDs)
 	if err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return respondError(c, err)
 	}
 
 	items := make([]groupMember, 0, len(members))
@@ -260,7 +272,7 @@ func (h *GroupHandler) ListGroupMembers(c echo.Context) error {
 		items = append(items, item)
 	}
 
-	return c.JSON(http.StatusOK, groupMemberListResponse{Members: items, Total: total})
+	return c.JSON(http.StatusOK, groupMemberListResponse{Members: items, Total: total, DuplicateCount: duplicateCount})
 }
 
 // ListGroups handles GET /api/v1/groups.
@@ -269,19 +281,19 @@ func (h *GroupHandler) ListGroups(c echo.Context) error {
 
 	limit, limitErr := parseLimit(c.QueryParam("limit"))
 	if limitErr != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	offset, offsetErr := parseOffset(c.QueryParam("offset"))
 	if offsetErr != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	q := c.QueryParam("q")
 
 	groups, total, err := h.Service.ListGroups(ctx, q, limit, offset)
 	if err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return respondError(c, err)
 	}
 
 	return c.JSON(http.StatusOK, groupListResponse{Groups: groups, Total: total})
@@ -293,24 +305,24 @@ func (h *GroupHandler) ListNonGroupMembers(c echo.Context) error {
 
 	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	limit, limitErr := parseLimit(c.QueryParam("limit"))
 	if limitErr != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	offset, offsetErr := parseOffset(c.QueryParam("offset"))
 	if offsetErr != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	q := c.QueryParam("q")
 
 	users, total, err := h.Service.ListNonGroupMembers(ctx, id, limit, offset, q)
 	if err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return respondError(c, err)
 	}
 
 	return c.JSON(http.StatusOK, nonMemberListResponse{Users: users, Total: total})
@@ -322,20 +334,20 @@ func (h *GroupHandler) DeleteGroupMembers(c echo.Context) error {
 
 	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	var req removeGroupMembersRequest
 	if bindErr := c.Bind(&req); bindErr != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: bindErr.Error()})
+		return badRequest(c, bindErr.Error())
 	}
 
 	if len(req.UserIDs) == 0 {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	if err := h.Service.RemoveGroupMembers(ctx, id, req.UserIDs); err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return respondError(c, err)
 	}
 
 	return c.NoContent(http.StatusNoContent)
@@ -347,21 +359,21 @@ func (h *GroupHandler) CreateSubGroup(c echo.Context) error {
 
 	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	if _, ok := c.Get("authUser").(domain.User); !ok {
-		return c.JSON(http.StatusUnauthorized, ResponseError{Message: "Unauthorized"})
+		return respondError(c, domain.ErrUnauthorized)
 	}
 
 	var req createSubGroupRequest
 	if bindErr := c.Bind(&req); bindErr != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: bindErr.Error()})
+		return badRequest(c, bindErr.Error())
 	}
 
 	result, err := h.Service.CreateSubGroup(ctx, id, req.ChildGroupID)
 	if err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return respondError(c, err)
 	}
 
 	return c.JSON(http.StatusCreated, result)
@@ -373,20 +385,20 @@ func (h *GroupHandler) DeleteSubGroup(c echo.Context) error {
 
 	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	childID, err := parsePathID(c.Param("childId"))
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	if _, ok := c.Get("authUser").(domain.User); !ok {
-		return c.JSON(http.StatusUnauthorized, ResponseError{Message: "Unauthorized"})
+		return respondError(c, domain.ErrUnauthorized)
 	}
 
 	if err := h.Service.DeleteSubGroup(ctx, id, childID); err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return respondError(c, err)
 	}
 
 	return c.NoContent(http.StatusNoContent)
@@ -398,21 +410,21 @@ func (h *GroupHandler) AddGroupMembers(c echo.Context) error {
 
 	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	var req addGroupMembersRequest
 	if bindErr := c.Bind(&req); bindErr != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: bindErr.Error()})
+		return badRequest(c, bindErr.Error())
 	}
 
 	if len(req.UserIDs) == 0 {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	members, err := h.Service.AddGroupMembers(ctx, id, req.UserIDs)
 	if err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return respondError(c, err)
 	}
 
 	return c.JSON(http.StatusCreated, addGroupMembersResponse{Members: members})

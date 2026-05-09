@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hrk-m/spec-to-dev-workflow/sample-api/domain"
 	mysqlRepo "github.com/hrk-m/spec-to-dev-workflow/sample-api/internal/repository/mysql"
 )
 
@@ -46,7 +45,7 @@ func TestListUsers_DefaultPagination(t *testing.T) {
 	db := userTestDB(t)
 	defer db.Close()
 
-	repo := mysqlRepo.NewUserRepository(db)
+	repo := mysqlRepo.NewUserRepository(db, testLogger())
 	users, total, err := repo.ListUsers(context.Background(), "", 10, 0)
 
 	assert.NoError(t, err)
@@ -58,7 +57,7 @@ func TestListUsers_Search(t *testing.T) {
 	db := userTestDB(t)
 	defer db.Close()
 
-	repo := mysqlRepo.NewUserRepository(db)
+	repo := mysqlRepo.NewUserRepository(db, testLogger())
 	users, total, err := repo.ListUsers(context.Background(), "Suzuki", 10, 0)
 
 	assert.NoError(t, err)
@@ -72,7 +71,7 @@ func TestListUsers_SearchKeyLike(t *testing.T) {
 	db := userTestDB(t)
 	defer db.Close()
 
-	repo := mysqlRepo.NewUserRepository(db)
+	repo := mysqlRepo.NewUserRepository(db, testLogger())
 	users, total, err := repo.ListUsers(context.Background(), "HanakoSuz", 10, 0)
 
 	assert.NoError(t, err)
@@ -86,7 +85,7 @@ func TestListUsers_EmptyResultWhenPagingPastEnd(t *testing.T) {
 	db := userTestDB(t)
 	defer db.Close()
 
-	repo := mysqlRepo.NewUserRepository(db)
+	repo := mysqlRepo.NewUserRepository(db, testLogger())
 	offset := activeUsersCount(t, db) + 100
 	users, total, err := repo.ListUsers(context.Background(), "", 10, offset)
 
@@ -108,7 +107,7 @@ func TestListUsers_ExcludesDeleted(t *testing.T) {
 
 	defer db.Exec("DELETE FROM users WHERE id = ?", deletedID) //nolint:errcheck
 
-	repo := mysqlRepo.NewUserRepository(db)
+	repo := mysqlRepo.NewUserRepository(db, testLogger())
 	users, total, err := repo.ListUsers(context.Background(), "", 10, 0)
 
 	assert.NoError(t, err)

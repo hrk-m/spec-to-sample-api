@@ -39,12 +39,12 @@ func (h *UserHandler) GetUser(c echo.Context) error {
 
 	id, err := parsePathID(c.Param("id"))
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	u, err := h.Service.GetUser(ctx, id)
 	if err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return respondError(c, err)
 	}
 
 	return c.JSON(http.StatusOK, u)
@@ -56,19 +56,19 @@ func (h *UserHandler) ListUsers(c echo.Context) error {
 
 	limit, limitErr := parseLimit(c.QueryParam("limit"))
 	if limitErr != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	offset, offsetErr := parseOffset(c.QueryParam("offset"))
 	if offsetErr != nil {
-		return c.JSON(http.StatusBadRequest, ResponseError{Message: domain.ErrBadParamInput.Error()})
+		return respondError(c, domain.ErrBadParamInput)
 	}
 
 	q := c.QueryParam("q")
 
 	users, total, err := h.Service.ListUsers(ctx, q, limit, offset)
 	if err != nil {
-		return c.JSON(getStatusCode(err), ResponseError{Message: err.Error()})
+		return respondError(c, err)
 	}
 
 	return c.JSON(http.StatusOK, userListResponse{Users: users, Total: total})

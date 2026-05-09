@@ -12,4 +12,6 @@ var (
 	ErrConflict = errors.New("your item already exist")
 	// ErrBadParamInput is returned when the given parameter is invalid.
 	ErrBadParamInput = errors.New("given param is not valid")
+	// ErrUnauthorized is returned when the request is not authenticated.
+	ErrUnauthorized = errors.New("Unauthorized")
 )

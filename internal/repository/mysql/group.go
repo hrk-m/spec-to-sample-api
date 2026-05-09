@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
@@ -22,12 +23,13 @@ type sourceGroupRow struct {
 
 // GroupRepository is a MySQL implementation of group.GroupRepository.
 type GroupRepository struct {
-	db *sql.DB
+	db     *sql.DB
+	logger *slog.Logger
 }
 
 // NewGroupRepository returns a new GroupRepository.
-func NewGroupRepository(db *sql.DB) *GroupRepository {
-	return &GroupRepository{db: db}
+func NewGroupRepository(db *sql.DB, logger *slog.Logger) *GroupRepository {
+	return &GroupRepository{db: db, logger: logger}
 }
 
 // ListGroups returns a filtered list of groups with filtered total count.
@@ -64,21 +66,60 @@ func (r *GroupRepository) countFilteredGroups(ctx context.Context, q string) (in
 	return total, nil
 }
 
-// selectGroups returns non-deleted groups with member counts, optionally filtered by q.
+// selectGroups returns non-deleted groups with recursive unique member counts, optionally filtered by q.
+// member_count reflects the total number of unique users across the group itself and all its descendant
+// subgroups, matching the semantics of GET /api/v1/groups/:id/members.total (no q / exclude_group_ids).
 func (r *GroupRepository) selectGroups(ctx context.Context, q string, limit, offset int) ([]domain.Group, error) {
-	query := "SELECT g.id, g.name, g.description, COUNT(gm.id) AS member_count" +
-		" FROM `groups` g LEFT JOIN group_members gm ON g.id = gm.group_id" +
-		" WHERE g.deleted_at IS NULL"
+	searchCondition, searchArgs := buildSearchCondition(q)
 
-	searchCondition, args := buildSearchCondition(q)
-	query += searchCondition //nolint:gosec // search condition uses parameterized placeholders
+	// Build the paginated subquery for the target groups.
+	// LIMIT/OFFSET is placed inside the derived table to avoid full-table recursion.
+	// The same search condition and LIMIT/OFFSET args are appended twice: once for
+	// the descendants CTE anchor and once for the outer main group SELECT.
+	innerSelect := "SELECT g.id FROM `groups` g WHERE g.deleted_at IS NULL" +
+		searchCondition + //nolint:gosec // search condition uses parameterized placeholders
+		" ORDER BY g.id DESC LIMIT ? OFFSET ?"
 
-	query += " GROUP BY g.id, g.name, g.description"
-	query += " ORDER BY g.id DESC LIMIT ? OFFSET ?"
+	//nolint:gosec // all variable parts use parameterized placeholders
+	query := `WITH RECURSIVE
+	descendants AS (
+		SELECT mg.id AS root_id, mg.id AS group_id, 0 AS depth
+		FROM (` + innerSelect + `) mg
+		UNION ALL
+		SELECT d.root_id, gr.child_group_id, d.depth + 1
+		FROM descendants d
+		JOIN group_relations gr ON gr.parent_group_id = d.group_id
+		JOIN ` + "`groups`" + ` cg ON cg.id = gr.child_group_id AND cg.deleted_at IS NULL
+	),
+	unique_member_counts AS (
+		SELECT d.root_id, COUNT(DISTINCT gm.user_id) AS member_count
+		FROM descendants d
+		JOIN group_members gm ON gm.group_id = d.group_id
+		GROUP BY d.root_id
+	)
+	SELECT mg.id, mg.name, mg.description, COALESCE(umc.member_count, 0) AS member_count
+	FROM (
+	SELECT g.id, g.name, g.description
+	FROM ` + "`groups`" + ` g
+	WHERE g.deleted_at IS NULL` +
+		searchCondition + //nolint:gosec
+		` ORDER BY g.id DESC LIMIT ? OFFSET ?
+	) mg
+	LEFT JOIN unique_member_counts umc ON umc.root_id = mg.id
+	ORDER BY mg.id DESC`
+
+	// searchArgs appear twice: once for the CTE anchor subquery and once for the outer subquery.
+	// LIMIT/OFFSET also appear twice for the same reason.
+	args := make([]interface{}, 0, len(searchArgs)*2+4)
+	args = append(args, searchArgs...)
+	args = append(args, limit, offset)
+	args = append(args, searchArgs...)
 	args = append(args, limit, offset)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
+		r.logger.ErrorContext(ctx, "selectGroups query failed", "error", err)
+
 		return nil, domain.ErrInternalServerError
 	}
 	defer func() { _ = rows.Close() }()
@@ -88,6 +129,8 @@ func (r *GroupRepository) selectGroups(ctx context.Context, q string, limit, off
 	for rows.Next() {
 		var g domain.Group
 		if scanErr := rows.Scan(&g.ID, &g.Name, &g.Description, &g.MemberCount); scanErr != nil {
+			r.logger.ErrorContext(ctx, "selectGroups scan failed", "error", scanErr)
+
 			return nil, domain.ErrInternalServerError
 		}
 
@@ -95,6 +138,8 @@ func (r *GroupRepository) selectGroups(ctx context.Context, q string, limit, off
 	}
 
 	if rowsErr := rows.Err(); rowsErr != nil {
+		r.logger.ErrorContext(ctx, "selectGroups rows error", "error", rowsErr)
+
 		return nil, domain.ErrInternalServerError
 	}
 
@@ -148,29 +193,24 @@ func (r *GroupRepository) Store(ctx context.Context, name, description string, u
 }
 
 // Update modifies a group's name, description, and updated_by, then returns the updated entity.
-func (r *GroupRepository) Update(ctx context.Context, id uint64, name, description string, userID uint64) (*domain.Group, error) {
+func (r *GroupRepository) Update(ctx context.Context, id uint64, name, description string, userID uint64) (domain.Group, error) {
 	query := "UPDATE `groups` SET name = ?, description = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL"
 
 	result, err := r.db.ExecContext(ctx, query, name, description, userID, id)
 	if err != nil {
-		return nil, domain.ErrInternalServerError
+		return domain.Group{}, domain.ErrInternalServerError
 	}
 
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return nil, domain.ErrInternalServerError
+		return domain.Group{}, domain.ErrInternalServerError
 	}
 
 	if rows == 0 {
-		return nil, domain.ErrNotFound
+		return domain.Group{}, domain.ErrNotFound
 	}
 
-	g, err := r.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-
-	return &g, nil
+	return r.GetByID(ctx, id)
 }
 
 // Delete soft-deletes a group by setting deleted_at and updated_by.
@@ -217,11 +257,15 @@ func (r *GroupRepository) GetByID(ctx context.Context, id uint64) (domain.Group,
 
 // ListGroupMembers returns paginated members for a group and all its descendants using WITH RECURSIVE.
 // Each user row includes a JSON array of all source groups (direct and via subgroups) they belong to.
-func (r *GroupRepository) ListGroupMembers(ctx context.Context, id uint64, limit, offset int, q string) ([]domain.GroupMember, int, error) {
+// excludeGroupIDs optionally filters out members whose direct source group (root_child_id) is in the given list.
+func (r *GroupRepository) ListGroupMembers(
+	ctx context.Context, id uint64, limit, offset int, q string, excludeGroupIDs []uint64,
+) ([]domain.GroupMember, int, int, error) {
 	// Build the WITH RECURSIVE query.
 	// descendants: (group_id, depth, root_child_id) — self and all descendant groups.
 	//   root_child_id is the depth=1 direct subgroup of the queried group (or the queried group itself at depth=0).
 	// user_sources: per (user, root_child_id) pair, the minimum depth for ordering.
+	//   When excludeGroupIDs is non-empty, rows whose root_child_id is in the exclusion list are filtered out.
 	// user_summary: aggregate all source groups per user into a JSON array ordered by depth.
 	// Final SELECT: apply ORDER BY and LIMIT/OFFSET, get total via window function.
 	query := `WITH RECURSIVE descendants AS (
@@ -241,28 +285,44 @@ user_sources AS (
         MIN(d.depth) AS source_depth
     FROM descendants d
     INNER JOIN group_members gm ON gm.group_id = d.group_id
-    INNER JOIN users u ON u.id = gm.user_id
+    INNER JOIN users u ON u.id = gm.user_id`
+
+	args := []interface{}{id}
+
+	// Add NOT IN clause for excludeGroupIDs only when non-empty.
+	// MySQL raises an error for "NOT IN ()", so this guard is required.
+	if len(excludeGroupIDs) > 0 {
+		placeholders, excludeArgs := placeholdersAndArgs(excludeGroupIDs)
+		query += fmt.Sprintf(" WHERE d.root_child_id NOT IN (%s)", placeholders) //nolint:gosec
+		args = append(args, excludeArgs...)
+	}
+
+	query += `
     GROUP BY u.id, u.uuid, u.first_name, u.last_name, u.search_key, d.root_child_id
+),
+user_sources_sorted AS (
+    SELECT us.*, g.name AS source_group_name
+    FROM user_sources us
+    INNER JOIN ` + "`groups`" + ` g ON g.id = us.source_group_id
+    ORDER BY us.source_depth ASC, us.source_group_id ASC
 ),
 user_summary AS (
     SELECT
-        us.user_id, us.uuid, us.first_name, us.last_name, us.search_key,
-        MIN(us.source_depth) AS min_depth,
+        user_id, uuid, first_name, last_name, search_key,
+        MIN(source_depth) AS min_depth,
         JSON_ARRAYAGG(
-            JSON_OBJECT('group_id', us.source_group_id, 'group_name', g.name)
+            JSON_OBJECT('group_id', source_group_id, 'group_name', source_group_name)
         ) AS source_groups
-    FROM user_sources us
-    INNER JOIN ` + "`groups`" + ` g ON g.id = us.source_group_id
-    GROUP BY us.user_id, us.uuid, us.first_name, us.last_name, us.search_key
+    FROM user_sources_sorted
+    GROUP BY user_id, uuid, first_name, last_name, search_key
 )`
-
-	args := []interface{}{id}
 
 	query += `
 SELECT
     us.user_id, us.uuid, us.first_name, us.last_name, us.search_key,
     us.source_groups,
-    COUNT(*) OVER() AS total
+    COUNT(*) OVER() AS total,
+    SUM(CASE WHEN JSON_LENGTH(us.source_groups) >= 2 THEN 1 ELSE 0 END) OVER() AS duplicate_count
 FROM user_summary us`
 
 	if q != "" {
@@ -275,25 +335,32 @@ FROM user_summary us`
 
 	rows, err := r.db.QueryContext(ctx, query, args...) //nolint:gosec
 	if err != nil {
-		return nil, 0, domain.ErrInternalServerError
+		r.logger.ErrorContext(ctx, "ListGroupMembers query failed", "error", err)
+
+		return nil, 0, 0, domain.ErrInternalServerError
 	}
 	defer func() { _ = rows.Close() }()
 
 	var members []domain.GroupMember
 	var total int
+	var duplicateCount int
 
 	for rows.Next() {
 		var m domain.GroupMember
 		var searchKey string
 		var sourceGroupsJSON []byte
 
-		if scanErr := rows.Scan(&m.ID, &m.UUID, &m.FirstName, &m.LastName, &searchKey, &sourceGroupsJSON, &total); scanErr != nil {
-			return nil, 0, domain.ErrInternalServerError
+		if scanErr := rows.Scan(&m.ID, &m.UUID, &m.FirstName, &m.LastName, &searchKey, &sourceGroupsJSON, &total, &duplicateCount); scanErr != nil {
+			r.logger.ErrorContext(ctx, "ListGroupMembers scan failed", "error", scanErr)
+
+			return nil, 0, 0, domain.ErrInternalServerError
 		}
 
 		var sgRows []sourceGroupRow
 		if unmarshalErr := json.Unmarshal(sourceGroupsJSON, &sgRows); unmarshalErr != nil {
-			return nil, 0, domain.ErrInternalServerError
+			r.logger.ErrorContext(ctx, "ListGroupMembers unmarshal failed", "error", unmarshalErr)
+
+			return nil, 0, 0, domain.ErrInternalServerError
 		}
 
 		m.SourceGroups = make([]domain.SourceGroup, len(sgRows))
@@ -305,14 +372,16 @@ FROM user_summary us`
 	}
 
 	if rowsErr := rows.Err(); rowsErr != nil {
-		return nil, 0, domain.ErrInternalServerError
+		r.logger.ErrorContext(ctx, "ListGroupMembers rows error", "error", rowsErr)
+
+		return nil, 0, 0, domain.ErrInternalServerError
 	}
 
 	if members == nil {
 		members = []domain.GroupMember{}
 	}
 
-	return members, total, nil
+	return members, total, duplicateCount, nil
 }
 
 // ListNonGroupMembers returns paginated users not in the given group.
@@ -383,18 +452,12 @@ func (r *GroupRepository) ListNonGroupMembers(ctx context.Context, groupID uint6
 // AddGroupMembers inserts all userIDs into group_members within a transaction and returns added users.
 func (r *GroupRepository) AddGroupMembers(ctx context.Context, groupID uint64, userIDs []uint64) ([]domain.User, error) {
 	// Check for existing members in one query before starting the transaction.
-	placeholders := make([]string, len(userIDs))
-	checkArgs := make([]interface{}, 0, len(userIDs)+1)
-	checkArgs = append(checkArgs, groupID)
-
-	for i, uid := range userIDs {
-		placeholders[i] = "?"
-		checkArgs = append(checkArgs, uid)
-	}
+	placeholders, idArgs := placeholdersAndArgs(userIDs)
+	checkArgs := append([]any{groupID}, idArgs...)
 
 	checkQuery := fmt.Sprintf( //nolint:gosec
 		"SELECT COUNT(*) FROM group_members WHERE group_id = ? AND user_id IN (%s)",
-		strings.Join(placeholders, ","),
+		placeholders,
 	)
 
 	var existingCount int
@@ -430,17 +493,10 @@ func (r *GroupRepository) AddGroupMembers(ctx context.Context, groupID uint64, u
 		return nil, domain.ErrInternalServerError
 	}
 
-	// Fetch the added users. Reuse the same placeholders slice built above.
-	selectArgs := make([]interface{}, len(userIDs))
-
-	for i, id := range userIDs {
-		selectArgs[i] = id
-	}
-
 	selectQuery := fmt.Sprintf("SELECT id, uuid, first_name, last_name FROM users WHERE id IN (%s) ORDER BY id ASC", //nolint:gosec
-		strings.Join(placeholders, ","))
+		placeholders)
 
-	rows, err := r.db.QueryContext(ctx, selectQuery, selectArgs...)
+	rows, err := r.db.QueryContext(ctx, selectQuery, idArgs...)
 	if err != nil {
 		return nil, domain.ErrInternalServerError
 	}
@@ -471,14 +527,8 @@ func (r *GroupRepository) AddGroupMembers(ctx context.Context, groupID uint64, u
 // RemoveGroupMembers removes the given users from a group within a transaction.
 // Returns ErrNotFound if any userID is not currently a member of the group.
 func (r *GroupRepository) RemoveGroupMembers(ctx context.Context, groupID uint64, userIDs []uint64) error {
-	placeholders := make([]string, len(userIDs))
-	deleteArgs := make([]interface{}, 0, len(userIDs)+1)
-	deleteArgs = append(deleteArgs, groupID)
-
-	for i, uid := range userIDs {
-		placeholders[i] = "?"
-		deleteArgs = append(deleteArgs, uid)
-	}
+	placeholders, idArgs := placeholdersAndArgs(userIDs)
+	deleteArgs := append([]any{groupID}, idArgs...)
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -487,7 +537,7 @@ func (r *GroupRepository) RemoveGroupMembers(ctx context.Context, groupID uint64
 
 	deleteQuery := fmt.Sprintf( //nolint:gosec
 		"DELETE FROM group_members WHERE group_id = ? AND user_id IN (%s)",
-		strings.Join(placeholders, ","),
+		placeholders,
 	)
 
 	result, execErr := tx.ExecContext(ctx, deleteQuery, deleteArgs...)

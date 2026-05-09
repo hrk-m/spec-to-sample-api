@@ -6,19 +6,20 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
+	"log/slog"
 
 	"github.com/hrk-m/spec-to-dev-workflow/sample-api/domain"
 )
 
 // UserRepository is a MySQL implementation of user.UserRepository and group.UserRepository.
 type UserRepository struct {
-	db *sql.DB
+	db     *sql.DB
+	logger *slog.Logger
 }
 
 // NewUserRepository returns a new UserRepository.
-func NewUserRepository(db *sql.DB) *UserRepository {
-	return &UserRepository{db: db}
+func NewUserRepository(db *sql.DB, logger *slog.Logger) *UserRepository {
+	return &UserRepository{db: db, logger: logger}
 }
 
 // ListUsers returns paginated active users with optional name search.
@@ -47,21 +48,17 @@ func (r *UserRepository) CountByIDs(ctx context.Context, ids []uint64) (int, err
 		return 0, nil
 	}
 
-	placeholders := make([]string, len(ids))
-	args := make([]interface{}, len(ids))
-
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args[i] = id
-	}
+	placeholders, args := placeholdersAndArgs(ids)
 
 	query := fmt.Sprintf( //nolint:gosec
 		"SELECT COUNT(DISTINCT id) FROM users WHERE id IN (%s) AND deleted_at IS NULL",
-		strings.Join(placeholders, ","),
+		placeholders,
 	)
 
 	var count int
 	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		r.logger.ErrorContext(ctx, "CountByIDs query failed", "error", err)
+
 		return 0, domain.ErrInternalServerError
 	}
 
@@ -79,6 +76,8 @@ func (r *UserRepository) GetByID(ctx context.Context, id uint64) (*domain.User, 
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, domain.ErrNotFound
 		}
+
+		r.logger.ErrorContext(ctx, "GetByID query failed", "error", err)
 
 		return nil, domain.ErrInternalServerError
 	}
@@ -98,6 +97,8 @@ func (r *UserRepository) GetByUUID(ctx context.Context, uuid string) (domain.Use
 			return domain.User{}, domain.ErrNotFound
 		}
 
+		r.logger.ErrorContext(ctx, "GetByUUID query failed", "error", err)
+
 		return domain.User{}, domain.ErrInternalServerError
 	}
 
@@ -116,6 +117,8 @@ func (r *UserRepository) countFilteredUsers(ctx context.Context, q string) (int,
 
 	var total int
 	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+		r.logger.ErrorContext(ctx, "countFilteredUsers query failed", "error", err)
+
 		return 0, domain.ErrInternalServerError
 	}
 
@@ -136,6 +139,8 @@ func (r *UserRepository) selectUsers(ctx context.Context, q string, limit, offse
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
+		r.logger.ErrorContext(ctx, "selectUsers query failed", "error", err)
+
 		return nil, domain.ErrInternalServerError
 	}
 	defer func() { _ = rows.Close() }()
@@ -144,6 +149,8 @@ func (r *UserRepository) selectUsers(ctx context.Context, q string, limit, offse
 	for rows.Next() {
 		var u domain.User
 		if scanErr := rows.Scan(&u.ID, &u.UUID, &u.FirstName, &u.LastName); scanErr != nil {
+			r.logger.ErrorContext(ctx, "selectUsers scan failed", "error", scanErr)
+
 			return nil, domain.ErrInternalServerError
 		}
 
@@ -151,6 +158,8 @@ func (r *UserRepository) selectUsers(ctx context.Context, q string, limit, offse
 	}
 
 	if rowsErr := rows.Err(); rowsErr != nil {
+		r.logger.ErrorContext(ctx, "selectUsers rows error", "error", rowsErr)
+
 		return nil, domain.ErrInternalServerError
 	}
 
