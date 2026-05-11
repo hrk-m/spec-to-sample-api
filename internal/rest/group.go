@@ -37,6 +37,7 @@ func NewGroupHandler(g *echo.Group, svc GroupService) {
 	g.GET("/groups", h.ListGroups)
 	g.GET("/groups/:id", h.GetByID)
 	g.GET("/groups/:id/members", h.ListGroupMembers)
+	g.GET("/groups/:id/subgroups", h.ListSubgroups)
 	g.GET("/groups/:id/non-members", h.ListNonGroupMembers)
 	g.POST("/groups", h.Store)
 	g.POST("/groups/:id/members", h.AddGroupMembers)
@@ -107,6 +108,10 @@ type subgroupSummary struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	MemberCount int    `json:"member_count"`
+}
+
+type subgroupListResponse struct {
+	Subgroups []subgroupSummary `json:"subgroups"`
 }
 
 type getGroupResponse struct {
@@ -223,6 +228,37 @@ func (h *GroupHandler) GetByID(c echo.Context) error {
 		MemberCount: grp.MemberCount,
 		Subgroups:   subs,
 	})
+}
+
+// ListSubgroups handles GET /api/v1/groups/:id/subgroups.
+func (h *GroupHandler) ListSubgroups(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	id, err := parsePathID(c.Param("id"))
+	if err != nil {
+		return respondError(c, domain.ErrBadParamInput)
+	}
+
+	if _, ok := c.Get("authUser").(domain.User); !ok {
+		return respondError(c, domain.ErrUnauthorized)
+	}
+
+	children, err := h.Service.ListSubgroups(ctx, id)
+	if err != nil {
+		return respondError(c, err)
+	}
+
+	subs := make([]subgroupSummary, 0, len(children))
+	for _, g := range children {
+		subs = append(subs, subgroupSummary{
+			ID:          g.ID,
+			Name:        g.Name,
+			Description: g.Description,
+			MemberCount: g.MemberCount,
+		})
+	}
+
+	return c.JSON(http.StatusOK, subgroupListResponse{Subgroups: subs})
 }
 
 // ListGroupMembers handles GET /api/v1/groups/:id/members.
