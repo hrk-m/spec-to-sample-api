@@ -2492,3 +2492,185 @@ func TestGroupHandler_DeleteSubGroup_InternalError(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
+// ListSubgroups tests
+
+// #1: 正常系 — subgroups 複数件を返す。
+func TestGroupHandler_ListSubgroups_OK(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/1/subgroups", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+	c.Set("authUser", domain.User{ID: 1, UUID: groupAuthUserUUID10})
+
+	svc := new(mocks.MockGroupService)
+	subgroups := []domain.Group{
+		{ID: 2, Name: groupFrontendTeam, Description: "FE チーム", MemberCount: 3},
+		{ID: 3, Name: "Backend Team", Description: "BE チーム", MemberCount: 4},
+	}
+	svc.On("ListSubgroups", mock.Anything, uint64(1)).Return(subgroups, nil)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.ListSubgroups(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var result struct {
+		Subgroups []struct {
+			ID          uint64 `json:"id"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			MemberCount int    `json:"member_count"`
+		} `json:"subgroups"`
+	}
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Len(t, result.Subgroups, 2)
+	assert.Equal(t, uint64(2), result.Subgroups[0].ID)
+	assert.Equal(t, groupFrontendTeam, result.Subgroups[0].Name)
+	assert.Equal(t, "FE チーム", result.Subgroups[0].Description)
+	assert.Equal(t, 3, result.Subgroups[0].MemberCount)
+	svc.AssertExpectations(t)
+}
+
+// #2: 境界値 — subgroups 0 件（親不存在含む）。
+func TestGroupHandler_ListSubgroups_Empty(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/999/subgroups", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("999")
+	c.Set("authUser", domain.User{ID: 1, UUID: groupAuthUserUUID10})
+
+	svc := new(mocks.MockGroupService)
+	svc.On("ListSubgroups", mock.Anything, uint64(999)).Return([]domain.Group{}, nil)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.ListSubgroups(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var result struct {
+		Subgroups []struct {
+			ID uint64 `json:"id"`
+		} `json:"subgroups"`
+	}
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Empty(t, result.Subgroups)
+	svc.AssertExpectations(t)
+}
+
+// #3: 異常系 — 文字列を id に指定。
+func TestGroupHandler_ListSubgroups_InvalidID(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/abc/subgroups", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("abc")
+
+	h := &rest.GroupHandler{Service: new(mocks.MockGroupService)}
+	err := h.ListSubgroups(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "given param is not valid", result["message"])
+}
+
+// #4: 境界値 — id=0。
+func TestGroupHandler_ListSubgroups_ZeroID(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/0/subgroups", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("0")
+
+	h := &rest.GroupHandler{Service: new(mocks.MockGroupService)}
+	err := h.ListSubgroups(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "given param is not valid", result["message"])
+}
+
+// #5: 例外処理 — 認証情報なし（authUser 未設定）。
+func TestGroupHandler_ListSubgroups_Unauthorized(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/1/subgroups", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+	// authUser を設定しない
+
+	h := &rest.GroupHandler{Service: new(mocks.MockGroupService)}
+	err := h.ListSubgroups(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// #6: 例外処理 — サービス層が DB エラーを返す。
+func TestGroupHandler_ListSubgroups_ServiceError(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/1/subgroups", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+	c.Set("authUser", domain.User{ID: 1, UUID: groupAuthUserUUID10})
+
+	svc := new(mocks.MockGroupService)
+	svc.On("ListSubgroups", mock.Anything, uint64(1)).
+		Return([]domain.Group(nil), domain.ErrInternalServerError)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.ListSubgroups(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+
+	var result map[string]string
+	assert.NoError(t, json.NewDecoder(rec.Body).Decode(&result))
+	assert.Equal(t, "internal server error", result["message"])
+	svc.AssertExpectations(t)
+}
+
+// #7: 外部依存 — サービスへの引数検証（id=42 で呼ばれること）。
+func TestGroupHandler_ListSubgroups_ServiceCalledWithCorrectID(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/groups/42/subgroups", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetPath("/api/v1/groups/:id/subgroups")
+	c.SetParamNames("id")
+	c.SetParamValues("42")
+	c.Set("authUser", domain.User{ID: 1, UUID: groupAuthUserUUID10})
+
+	svc := new(mocks.MockGroupService)
+	svc.On("ListSubgroups", mock.Anything, uint64(42)).Return([]domain.Group{}, nil)
+
+	h := &rest.GroupHandler{Service: svc}
+	err := h.ListSubgroups(c)
+
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	svc.AssertExpectations(t)
+}
+
